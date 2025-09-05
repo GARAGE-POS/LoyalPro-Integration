@@ -29,27 +29,23 @@ public class ProductFunctions
 
         try
         {
-            var verificationResult = await _apiKeyService.VerifyApiKey(req);
+            var (verificationResult, user) = await _apiKeyService.VerifyApiKeyAndGetUser(req);
             if (verificationResult != null)
             {
                 return verificationResult;
             }
 
-            var locationIdStr = req.Query["locationId"].ToString();
-            var userIdStr = req.Query["userId"].ToString();
-
-            // Default values based on the SQL query
-            int locationId = 1;
-            int userId = 2;
-
-            if (!string.IsNullOrEmpty(locationIdStr) && int.TryParse(locationIdStr, out int parsedLocationId))
+            if (user == null)
             {
-                locationId = parsedLocationId;
+                return new UnauthorizedResult();
             }
 
-            if (!string.IsNullOrEmpty(userIdStr) && int.TryParse(userIdStr, out int parsedUserId))
+            int userId = user.UserID;
+
+            var locationIdStr = req.Query["locationId"].ToString();
+            if (string.IsNullOrEmpty(locationIdStr) || !int.TryParse(locationIdStr, out int locationId))
             {
-                userId = parsedUserId;
+                return new BadRequestObjectResult(new { message = "Invalid or missing locationId" });
             }
 
             // Execute the query equivalent to the SQL provided
