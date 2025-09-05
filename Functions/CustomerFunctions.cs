@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Karage.Functions.Models;
 using Karage.Functions.Data;
+using Karage.Functions.Services;
 using System.Text.RegularExpressions;
 
 
@@ -14,22 +15,30 @@ public class CustomerFunctions
 {
     private readonly ILogger<CustomerFunctions> _logger;
     private readonly V1DbContext _context;
+    private readonly IApiKeyService _apiKeyService;
 
-    public CustomerFunctions(ILogger<CustomerFunctions> logger, V1DbContext context)
+    public CustomerFunctions(ILogger<CustomerFunctions> logger, V1DbContext context, IApiKeyService apiKeyService)
     {
         _logger = logger;
         _context = context;
+        _apiKeyService = apiKeyService;
     }
 
 
     [Function("Customers")]
     public async Task<IActionResult> SearchCustomerByPhoneNumber(
-        [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
     {
         _logger.LogInformation("Search customer by phone number endpoint called.");
 
         try
         {
+            var verificationResult = await _apiKeyService.VerifyApiKey(req);
+            if (verificationResult != null)
+            {
+                return verificationResult;
+            }
+
             var phoneNumber = req.Query["filter[phone]"].ToString();
 
             if (string.IsNullOrEmpty(phoneNumber))
@@ -72,12 +81,18 @@ public class CustomerFunctions
 
     [Function("CreateCustomer")]
     public async Task<IActionResult> AddCustomer(
-        [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
         _logger.LogInformation("Add customer endpoint called.");
 
         try
         {
+            var verificationResult = await _apiKeyService.VerifyApiKey(req);
+            if (verificationResult != null)
+            {
+                return verificationResult;
+            }
+
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             var doc = System.Text.Json.JsonDocument.Parse(requestBody);
             var root = doc.RootElement;
@@ -155,12 +170,18 @@ public class CustomerFunctions
 
     [Function("UpdateCustomer")]
     public async Task<IActionResult> UpdateCustomer(
-        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "UpdateCustomer/{customerId}")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "UpdateCustomer/{customerId}")] HttpRequest req)
     {
         _logger.LogInformation("Update customer endpoint called.");
 
         try
         {
+            var verificationResult = await _apiKeyService.VerifyApiKey(req);
+            if (verificationResult != null)
+            {
+                return verificationResult;
+            }
+
             var customerIdStr = req.RouteValues["customerId"]?.ToString();
 
             if (string.IsNullOrEmpty(customerIdStr) || !int.TryParse(customerIdStr, out int customerId))

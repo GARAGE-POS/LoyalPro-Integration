@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Karage.Functions.Models;
 using Karage.Functions.Data;
+using Karage.Functions.Services;
 using Microsoft.Extensions.Configuration;
 using System.Security.Cryptography;
 using System.Text;
@@ -16,12 +17,14 @@ public class VerifyMerchantFunctions
     private readonly ILogger<VerifyMerchantFunctions> _logger;
     private readonly V1DbContext _context;
     private readonly IConfiguration _configuration;
+    private readonly IApiKeyService _apiKeyService;
 
-    public VerifyMerchantFunctions(ILogger<VerifyMerchantFunctions> logger, V1DbContext context, IConfiguration configuration)
+    public VerifyMerchantFunctions(ILogger<VerifyMerchantFunctions> logger, V1DbContext context, IConfiguration configuration, IApiKeyService apiKeyService)
     {
         _logger = logger;
         _context = context;
         _configuration = configuration;
+        _apiKeyService = apiKeyService;
     }
 
     [Function("VerifyMerchant")]
@@ -32,26 +35,15 @@ public class VerifyMerchantFunctions
 
         try
         {
-            if (!req.Headers.TryGetValue("X-API-Key", out var providedApiKey))
+            var (verificationResult, user) = await _apiKeyService.VerifyApiKeyAndGetUser(req);
+            if (verificationResult != null)
             {
-                return new UnauthorizedResult();
+                return verificationResult;
             }
 
-            var providedApiKeyString = providedApiKey.ToString();
-
-            
-            var user = await _context.Users
-                .Where(u => u.Password == providedApiKeyString && u.StatusID == 1)
-                .FirstOrDefaultAsync();
-
-            if (user == null)
-            {
-                return new UnauthorizedResult();                
-            }
-          
             return new OkObjectResult(new
             {
-                Company = user.Company,
+                Company = user!.Company,
                 CompanyCode = user.CompanyCode
             });
         }

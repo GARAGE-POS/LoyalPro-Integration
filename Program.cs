@@ -3,6 +3,7 @@ using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Karage.Functions.Data;
+using Karage.Functions.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -35,6 +36,9 @@ catch (Exception ex)
     Console.WriteLine($"Stack Trace: {ex.StackTrace}");
     Environment.Exit(1);
 }
+
+// Register API Key Service
+builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
 
 // Add global exception handler
 builder.Services.AddLogging(logging =>

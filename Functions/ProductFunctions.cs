@@ -4,6 +4,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Karage.Functions.Data;
+using Karage.Functions.Services;
 
 namespace Karage.Functions.Functions;
 
@@ -11,21 +12,29 @@ public class ProductFunctions
 {
     private readonly ILogger<ProductFunctions> _logger;
     private readonly V1DbContext _context;
+    private readonly IApiKeyService _apiKeyService;
 
-    public ProductFunctions(ILogger<ProductFunctions> logger, V1DbContext context)
+    public ProductFunctions(ILogger<ProductFunctions> logger, V1DbContext context, IApiKeyService apiKeyService)
     {
         _logger = logger;
         _context = context;
+        _apiKeyService = apiKeyService;
     }
 
     [Function("GetProducts")]
     public async Task<IActionResult> GetProducts(
-        [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
     {
         _logger.LogInformation("Get products endpoint called.");
 
         try
         {
+            var verificationResult = await _apiKeyService.VerifyApiKey(req);
+            if (verificationResult != null)
+            {
+                return verificationResult;
+            }
+
             var locationIdStr = req.Query["locationId"].ToString();
             var userIdStr = req.Query["userId"].ToString();
 
