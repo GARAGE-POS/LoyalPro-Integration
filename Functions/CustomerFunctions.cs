@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Karage.Functions.Models;
 using Karage.Functions.Data;
+using System.Text.RegularExpressions;
 
 
 namespace Karage.Functions.Functions;
@@ -21,7 +22,7 @@ public class CustomerFunctions
     }
 
 
-    [Function("SearchCustomerByPhoneNumber")]
+    [Function("customers")]
     public async Task<IActionResult> SearchCustomerByPhoneNumber(
         [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequest req)
     {
@@ -29,7 +30,7 @@ public class CustomerFunctions
 
         try
         {
-            var phoneNumber = req.Query["phoneNumber"].ToString();
+            var phoneNumber = req.Query["filter[phone]"].ToString();
             
             if (string.IsNullOrEmpty(phoneNumber))
             {
@@ -39,7 +40,7 @@ public class CustomerFunctions
             var normalizedInput = NormalizePhone(phoneNumber);
             if (normalizedInput == null)
             {
-                return new BadRequestObjectResult(new { error = "Phone number must start with +966" });
+                return new BadRequestObjectResult(new { error = "Invalid phone number format" });
             }
                                       
                 var customers = await _context.Customers
@@ -186,6 +187,12 @@ public class CustomerFunctions
         var trimmed = phone.Trim();
         if (trimmed.StartsWith("+966")) return trimmed;
         if (trimmed.StartsWith("966")) return "+966" + trimmed.Substring(3);
+        if (trimmed.StartsWith("00966")) return "+966" + trimmed.Substring(5);
+        if (trimmed.StartsWith("0")) return "+966" + trimmed.Substring(1);
+        if (Regex.IsMatch(trimmed, @"^\d+$"))
+        {
+            return "+966" + trimmed;
+        }
         return null;
     }
 }
