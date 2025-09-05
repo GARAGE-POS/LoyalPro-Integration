@@ -43,36 +43,15 @@ public class LocationFunctions
             int userId = user.UserID;
 
             var locations = await _context.Locations
-                .Include(l => l.User)
-                .Where(l => l.User!.UserID == userId && l.StatusID == 1) // Assuming StatusID for active locations
+                .Where(l => l.UserID == userId && l.StatusID == 1) // Assuming StatusID for active locations
                 .Select(l => new
                 {
-                    l.LocationID,
-                    l.Name,
-                    l.Address,
-                    l.ContactNo,
-                    l.Email,
-                    User = new
-                    {
-                        l.User!.UserID,
-                        l.User.UserName,
-                        l.User.Company,
-                        l.User.Email
-                    }
+                    locationId = l.LocationID,
+                    name = l.Name
                 })
                 .ToListAsync();
 
-            if (!locations.Any())
-            {
-                return new NotFoundObjectResult(new { message = "No locations found for the specified user" });
-            }
-
-            return new OkObjectResult(new
-            {
-                totalCount = locations.Count,
-                userId = userId,
-                locations = locations
-            });
+            return new OkObjectResult(locations);
         }
         catch (Exception ex)
         {

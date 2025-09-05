@@ -52,25 +52,24 @@ public class CustomerFunctions
                 return new BadRequestObjectResult(new { error = "Invalid phone number format" });
             }
 
-            var customers = await _context.Customers
-                .Where(c => c.StatusID == 1 && c.Mobile == normalizedInput)
-                .ToListAsync();
+            var customer = await _context.Customers
+                .FirstOrDefaultAsync(c => c.StatusID == 1 && c.Mobile == normalizedInput);
 
-            if (!customers.Any())
+            if (customer == null)
             {
-                return new NotFoundObjectResult(new { message = "No customers found with the provided phone number" });
+                return new NotFoundObjectResult(new { message = "No customer found with the provided phone number" });
             }
 
-            var formattedCustomers = customers.Select(c => new
+            var formattedCustomer = new
             {
-                customerId = c.CustomerID,
-                name = c.FullName,
-                email = c.Email,
-                phone = c.Mobile.StartsWith("+966") ? c.Mobile.Substring(4) : c.Mobile,
+                customerId = customer.CustomerID,
+                name = customer.FullName,
+                email = customer.Email,
+                phone = customer.Mobile.StartsWith("+966") ? customer.Mobile.Substring(4) : customer.Mobile,
                 phone_prefix = 966
-            });
+            };
 
-            return new OkObjectResult(formattedCustomers);
+            return new OkObjectResult(formattedCustomer);
         }
         catch (Exception ex)
         {

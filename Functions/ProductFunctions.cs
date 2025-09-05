@@ -42,13 +42,23 @@ public class ProductFunctions
 
             int userId = user.UserID;
 
-            var locationIdStr = req.Query["locationId"].ToString();
-            if (string.IsNullOrEmpty(locationIdStr) || !int.TryParse(locationIdStr, out int locationId))
-            {
-                return new BadRequestObjectResult(new { message = "Invalid or missing locationId" });
-            }
+            // Parse pagination parameters
+            int page = int.TryParse(req.Query["page"], out var p) ? Math.Max(1, p) : 1;
+            int pageSize = int.TryParse(req.Query["pageSize"], out var ps) ? Math.Clamp(ps, 1, 100) : 20;
 
-            // Execute the query equivalent to the SQL provided
+            // Get total count first
+            int totalCount = await _context.Items
+                .Include(i => i.SubCategory)
+                    .ThenInclude(sc => sc!.Category)
+                        .ThenInclude(c => c!.Location)
+                            .ThenInclude(l => l!.User)
+                .Where(i => i.StatusID == 1 &&
+                           i.SubCategory!.StatusID == 1 &&
+                           i.SubCategory.Category!.StatusID == 1 &&
+                           i.SubCategory.Category.Location!.User!.UserID == userId)
+                .CountAsync();
+
+            // Execute the query with pagination
             var products = await _context.Items
                 .Include(i => i.SubCategory)
                     .ThenInclude(sc => sc!.Category)
@@ -57,78 +67,26 @@ public class ProductFunctions
                 .Where(i => i.StatusID == 1 &&
                            i.SubCategory!.StatusID == 1 &&
                            i.SubCategory.Category!.StatusID == 1 &&
-                           i.SubCategory.Category.LocationID == locationId &&
                            i.SubCategory.Category.Location!.User!.UserID == userId)
                 .Select(i => new
                 {
-                    // Item fields
-                    i.ItemID,
-                    i.Name,
-                    i.NameOnReceipt,
-                    i.Description,
-                    i.ItemImage,
-                    i.Barcode,
-                    i.SKU,
-                    i.Price,
-                    i.Cost,
-                    i.ItemType,
-                    i.FeaturedItem,
-                    i.DisplayOrder,
-                    
-                    // SubCategory fields
-                    SubCategory = new
-                    {
-                        i.SubCategory!.SubCategoryID,
-                        i.SubCategory.Name,
-                        i.SubCategory.Description,
-                        i.SubCategory.SubImage,
-                        i.SubCategory.DisplayOrder
-                    },
-                    
-                    // Category fields
-                    Category = new
-                    {
-                        i.SubCategory.Category!.CategoryID,
-                        i.SubCategory.Category.Name,
-                        i.SubCategory.Category.Description,
-                        i.SubCategory.Category.Image,
-                        i.SubCategory.Category.DisplayOrder
-                    },
-                    
-                    // Location fields
-                    Location = new
-                    {
-                        i.SubCategory.Category.Location!.LocationID,
-                        i.SubCategory.Category.Location.Name,
-                        i.SubCategory.Category.Location.Address,
-                        i.SubCategory.Category.Location.ContactNo,
-                        i.SubCategory.Category.Location.Email
-                    },
-                    
-                    // User fields
-                    User = new
-                    {
-                        i.SubCategory.Category.Location.User!.UserID,
-                        i.SubCategory.Category.Location.User.UserName,
-                        i.SubCategory.Category.Location.User.Company,
-                        i.SubCategory.Category.Location.User.Email
-                    }
+                    itemID = i.ItemID,
+                    name = i.Name,
+                    locationID = i.SubCategory!.Category!.Location!.LocationID
                 })
-                .OrderBy(i => i.Category.DisplayOrder)
-                .ThenBy(i => i.SubCategory.DisplayOrder)
-                .ThenBy(i => i.DisplayOrder)
-                .ThenBy(i => i.Name)
+                .OrderByDescending(i => i.itemID)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .ToListAsync();
 
-            if (!products.Any())
-            {
-                return new NotFoundObjectResult(new { message = "No products found for the specified location and user" });
-            }
+            int totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
 
             return new OkObjectResult(new
             {
-                totalCount = products.Count,
-                locationId = locationId,
+                totalCount = totalCount,
+                currentPage = page,
+                pageSize = pageSize,
+                totalPages = totalPages,
                 userId = userId,
                 products = products
             });
