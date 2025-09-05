@@ -22,7 +22,7 @@ public class CustomerFunctions
     }
 
 
-    [Function("customers")]
+    [Function("Customers")]
     public async Task<IActionResult> SearchCustomerByPhoneNumber(
         [HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequest req)
     {
@@ -31,7 +31,7 @@ public class CustomerFunctions
         try
         {
             var phoneNumber = req.Query["filter[phone]"].ToString();
-            
+
             if (string.IsNullOrEmpty(phoneNumber))
             {
                 return new BadRequestObjectResult(new { error = "Phone number is required" });
@@ -42,17 +42,26 @@ public class CustomerFunctions
             {
                 return new BadRequestObjectResult(new { error = "Invalid phone number format" });
             }
-                                      
-                var customers = await _context.Customers
-                    .Where(c => c.StatusID == 1 && c.Mobile == normalizedInput)
-                    .ToListAsync();
+
+            var customers = await _context.Customers
+                .Where(c => c.StatusID == 1 && c.Mobile == normalizedInput)
+                .ToListAsync();
 
             if (!customers.Any())
             {
                 return new NotFoundObjectResult(new { message = "No customers found with the provided phone number" });
             }
 
-            return new OkObjectResult(customers);
+            var formattedCustomers = customers.Select(c => new
+            {
+                customerId = c.CustomerID,
+                name = c.FullName,
+                email = c.Email,
+                phone = c.Mobile.StartsWith("+966") ? c.Mobile.Substring(4) : c.Mobile,
+                phone_prefix = 966
+            });
+
+            return new OkObjectResult(formattedCustomers);
         }
         catch (Exception ex)
         {
@@ -61,7 +70,7 @@ public class CustomerFunctions
         }
     }
 
-    [Function("AddCustomer")]
+    [Function("CreateCustomer")]
     public async Task<IActionResult> AddCustomer(
         [HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req)
     {
@@ -70,26 +79,42 @@ public class CustomerFunctions
         try
         {
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            var customer = System.Text.Json.JsonSerializer.Deserialize<Customer>(requestBody, new System.Text.Json.JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var doc = System.Text.Json.JsonDocument.Parse(requestBody);
+            var root = doc.RootElement;
 
-            if (customer == null)
+            var customer = new Customer();
+
+            // Map payload fields
+            if (root.TryGetProperty("name", out var nameElement))
             {
-                return new BadRequestObjectResult(new { error = "Invalid customer data" });
+                customer.FullName = nameElement.GetString();
+            }
+            if (root.TryGetProperty("email", out var emailElement))
+            {
+                customer.Email = emailElement.GetString();
             }
 
-            // Validate required fields
-            if (string.IsNullOrEmpty(customer.Mobile))
+            string? phone = null;
+            int? phonePrefix = null;
+            if (root.TryGetProperty("phone", out var phoneElement))
             {
-                return new BadRequestObjectResult(new { error = "Mobile number is required" });
+                phone = phoneElement.GetString();
+            }
+            if (root.TryGetProperty("phone_prefix", out var prefixElement))
+            {
+                phonePrefix = prefixElement.GetInt32();
             }
 
-            var normalizedMobile = NormalizePhone(customer.Mobile);
+            if (string.IsNullOrEmpty(phone) || !phonePrefix.HasValue)
+            {
+                return new BadRequestObjectResult(new { error = "Phone and phone_prefix are required" });
+            }
+
+            var combinedPhone = $"+{phonePrefix}{phone}";
+            var normalizedMobile = NormalizePhone(combinedPhone);
             if (normalizedMobile == null)
             {
-                return new BadRequestObjectResult(new { error = "Phone number must start with +966" });
+                return new BadRequestObjectResult(new { error = "Invalid phone number format" });
             }
             customer.Mobile = normalizedMobile;
 
@@ -110,7 +135,16 @@ public class CustomerFunctions
             _context.Customers.Add(customer);
             await _context.SaveChangesAsync();
 
-            return new CreatedResult($"/api/customers/{customer.CustomerID}", customer);
+            var formattedCustomer = new
+            {
+                customerId = customer.CustomerID,
+                name = customer.FullName,
+                email = customer.Email,
+                phone = customer.Mobile.StartsWith("+966") ? customer.Mobile.Substring(4) : customer.Mobile,
+                phone_prefix = 966
+            };
+
+            return new CreatedResult($"/api/customers/{customer.CustomerID}", formattedCustomer);
         }
         catch (Exception ex)
         {
@@ -121,29 +155,22 @@ public class CustomerFunctions
 
     [Function("UpdateCustomer")]
     public async Task<IActionResult> UpdateCustomer(
-        [HttpTrigger(AuthorizationLevel.Function, "put")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "UpdateCustomer/{customerId}")] HttpRequest req)
     {
         _logger.LogInformation("Update customer endpoint called.");
 
         try
         {
-            var customerIdStr = req.Query["customerId"].ToString();
-            
+            var customerIdStr = req.RouteValues["customerId"]?.ToString();
+
             if (string.IsNullOrEmpty(customerIdStr) || !int.TryParse(customerIdStr, out int customerId))
             {
                 return new BadRequestObjectResult(new { error = "Valid customer ID is required" });
             }
 
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            var updatedCustomer = System.Text.Json.JsonSerializer.Deserialize<Customer>(requestBody, new System.Text.Json.JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-
-            if (updatedCustomer == null)
-            {
-                return new BadRequestObjectResult(new { error = "Invalid customer data" });
-            }
+            var doc = System.Text.Json.JsonDocument.Parse(requestBody);
+            var root = doc.RootElement;
 
             var existingCustomer = await _context.Customers
                 .FirstOrDefaultAsync(c => c.CustomerID == customerId);
@@ -153,26 +180,52 @@ public class CustomerFunctions
                 return new NotFoundObjectResult(new { error = "Customer not found" });
             }
 
-            // Update fields
-            existingCustomer.UserName = updatedCustomer.UserName ?? existingCustomer.UserName;
-            existingCustomer.FullName = updatedCustomer.FullName ?? existingCustomer.FullName;
-            existingCustomer.Email = updatedCustomer.Email ?? existingCustomer.Email;
-            existingCustomer.DOB = updatedCustomer.DOB ?? existingCustomer.DOB;
-            existingCustomer.Sex = updatedCustomer.Sex ?? existingCustomer.Sex;
-            var normalizedMobile = NormalizePhone(updatedCustomer.Mobile ?? existingCustomer.Mobile);
-            if (normalizedMobile == null)
+            // Map payload fields
+            if (root.TryGetProperty("name", out var nameElement))
             {
-                return new BadRequestObjectResult(new { error = "Phone number must start with +966" });
+                existingCustomer.FullName = nameElement.GetString();
             }
-            existingCustomer.Mobile = normalizedMobile;
-            existingCustomer.City = updatedCustomer.City ?? existingCustomer.City;
-            existingCustomer.Country = updatedCustomer.Country ?? existingCustomer.Country;
+            if (root.TryGetProperty("email", out var emailElement))
+            {
+                existingCustomer.Email = emailElement.GetString();
+            }
+
+            string? phone = null;
+            int? phonePrefix = null;
+            if (root.TryGetProperty("phone", out var phoneElement))
+            {
+                phone = phoneElement.GetString();
+            }
+            if (root.TryGetProperty("phone_prefix", out var prefixElement))
+            {
+                phonePrefix = prefixElement.GetInt32();
+            }
+
+            if (!string.IsNullOrEmpty(phone) && phonePrefix.HasValue)
+            {
+                var combinedPhone = $"+{phonePrefix}{phone}";
+                var normalizedMobile = NormalizePhone(combinedPhone);
+                if (normalizedMobile == null)
+                {
+                    return new BadRequestObjectResult(new { error = "Invalid phone number format" });
+                }
+                existingCustomer.Mobile = normalizedMobile;
+            }
+
             existingCustomer.LastUpdatedDate = DateTime.UtcNow;
-            existingCustomer.LastUpdatedBy = updatedCustomer.LastUpdatedBy;
 
             await _context.SaveChangesAsync();
 
-            return new OkObjectResult(existingCustomer);
+            var formattedCustomer = new
+            {
+                customerId = existingCustomer.CustomerID,
+                name = existingCustomer.FullName,
+                email = existingCustomer.Email,
+                phone = existingCustomer.Mobile.StartsWith("+966") ? existingCustomer.Mobile.Substring(4) : existingCustomer.Mobile,
+                phone_prefix = 966
+            };
+
+            return new OkObjectResult(formattedCustomer);
         }
         catch (Exception ex)
         {
@@ -195,4 +248,6 @@ public class CustomerFunctions
         }
         return null;
     }
+    
+    
 }
