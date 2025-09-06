@@ -36,6 +36,7 @@ public class OrderItemDto
 {
     public int? ItemID { get; set; }
     public string Name { get; set; } = string.Empty;
+    public double? Price { get; set; }
 }
 
 public class OrderFunctions
@@ -101,7 +102,8 @@ public class OrderFunctions
                                   select new OrderItemDto
                                   {
                                       ItemID = od.ItemID,
-                                      Name = i.Name ?? "Unknown Item"
+                                      Name = i.Name ?? "Unknown Item",
+                                      Price = od.Price
                                   }).ToListAsync();
 
             var response = new OrderPayloadResponseDto
