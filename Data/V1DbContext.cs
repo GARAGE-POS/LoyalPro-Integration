@@ -27,7 +27,13 @@ public class V1DbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // Configure relationships
+    // Configure relationships
+        // Configure one-to-one relationship between OrderCheckout and Orders
+        modelBuilder.Entity<OrderCheckout>()
+            .HasOne(oc => oc.Orders)
+            .WithOne(o => o.OrderCheckout)
+            .HasForeignKey<OrderCheckout>(oc => oc.OrderID)
+            .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Item>()
             .HasOne(i => i.SubCategory)
             .WithMany(sc => sc.Items)
