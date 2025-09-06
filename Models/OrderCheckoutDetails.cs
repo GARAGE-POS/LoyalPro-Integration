@@ -11,9 +11,9 @@ public class OrderCheckoutDetails
 
     public int OrderCheckoutID { get; set; }
 
-    public float? AmountPaid { get; set; }
+    public double? AmountPaid { get; set; }
 
-    public float? AmountDiscount { get; set; }
+    public double? AmountDiscount { get; set; }
 
     public DateTime? CheckoutDate { get; set; }
 

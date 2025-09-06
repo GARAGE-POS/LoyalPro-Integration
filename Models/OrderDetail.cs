@@ -17,15 +17,15 @@ public class OrderDetail
 
   public int? PackageID { get; set; }
 
-  public float? Quantity { get; set; }
+  public double? Quantity { get; set; }
 
-  public float? Price { get; set; }
+  public double? Price { get; set; }
 
-  public float? Cost { get; set; }
+  public double? Cost { get; set; }
 
   public int? StatusID { get; set; }
 
-  public float? DiscountAmount { get; set; }
+  public double? DiscountAmount { get; set; }
 
   // Navigation properties
   [ForeignKey("OrderID")]

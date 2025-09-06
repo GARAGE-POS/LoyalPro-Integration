@@ -1,0 +1,20 @@
+{
+  "Event": {
+    "ID": "9edb65d0-ee21-4e32-a99d-85bf2f454e73"
+  },  
+  "POSBusinessReference": "POS-KXCBSH",
+  "LocationID": 167,
+"AmountTotal": 10,
+"DiscountedAmount": 2,
+"Order":{
+    "OrderID": 0,
+    "OrderCreatedDT": "2024-09-18 13:03:09.333"
+},
+"OrderItems":[
+    {
+        "itemID": 177297,
+        "name": "open item"
+
+    }
+]
+}
