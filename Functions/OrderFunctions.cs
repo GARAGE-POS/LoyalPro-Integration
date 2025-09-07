@@ -15,6 +15,7 @@ public class OrderPayloadResponseDto
     public EventDto Event { get; set; } = new EventDto();
     public string POSBusinessReference { get; set; } = string.Empty;
     public int LocationID { get; set; }
+    public int CustomerID { get; set; }
     public double? AmountTotal { get; set; }
     public double? DiscountedAmount { get; set; }
     public OrderDto Order { get; set; } = new OrderDto();
@@ -37,6 +38,8 @@ public class OrderItemDto
     public int? ItemID { get; set; }
     public string Name { get; set; } = string.Empty;
     public double? Price { get; set; }
+    public double? Quantity { get; set; }
+    public double? TotalPrice { get; set; }
 }
 
 public class OrderFunctions
@@ -58,6 +61,8 @@ public class OrderFunctions
     public async Task<IActionResult> GetOrderPayload(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
     {
+
+        //@TODO: Add refundorder flag by looking at OriginalOrderId
         _logger.LogInformation("Get order payload endpoint called.");
 
         var (verificationResult, user) = await _apiKeyService.VerifyApiKeyAndGetUser(req);
@@ -87,6 +92,7 @@ public class OrderFunctions
                                      OrderID = o.OrderID,
                                      OrderCreatedDT = o.OrderCreatedDT,
                                      LocationID = o.LocationID,
+                                     CustomerID = o.CustomerID,
                                      AmountTotal = oc.AmountTotal,
                                      AmountDiscount = oc.AmountDiscount
                                  }).FirstOrDefaultAsync();
@@ -103,7 +109,9 @@ public class OrderFunctions
                                   {
                                       ItemID = od.ItemID,
                                       Name = i.Name ?? "Unknown Item",
-                                      Price = od.Price
+                                      Price = od.Price,
+                                      Quantity = od.Quantity,
+                                      TotalPrice = (od.Quantity ?? 0) * (od.Price ?? 0)
                                   }).ToListAsync();
 
             var response = new OrderPayloadResponseDto
@@ -111,6 +119,7 @@ public class OrderFunctions
                 Event = new EventDto { ID = Guid.NewGuid().ToString() },
                 POSBusinessReference = user.CompanyCode ?? string.Empty,
                 LocationID = orderData.LocationID,
+                CustomerID = orderData.CustomerID ?? 0,
                 AmountTotal = orderData.AmountTotal,
                 DiscountedAmount = orderData.AmountDiscount,
                 Order = new OrderDto
