@@ -15,11 +15,17 @@ public class OrderPayloadResponseDto
     public EventDto Event { get; set; } = new EventDto();
     public string POSBusinessReference { get; set; } = string.Empty;
     public int LocationID { get; set; }
-    public int CustomerID { get; set; }
+    public CustomerDto Customer { get; set; } = new CustomerDto();
     public double? AmountTotal { get; set; }
     public double? DiscountedAmount { get; set; }
     public OrderDto Order { get; set; } = new OrderDto();
     public List<OrderItemDto> OrderItems { get; set; } = new List<OrderItemDto>();
+}
+
+public class CustomerDto
+{
+    public int Id { get; set; }
+    public string Phone { get; set; } = string.Empty;
 }
 
 public class EventDto
@@ -102,24 +108,66 @@ public class OrderFunctions
                 return new NotFoundObjectResult(new { error = "Order not found" });
             }
 
-            var orderItems = await (from od in _context.OrderDetails
-                                  from i in _context.Items.Where(i => i.ItemID == od.ItemID).DefaultIfEmpty()
-                                  where od.OrderID == orderId
-                                  select new OrderItemDto
-                                  {
-                                      ItemID = od.ItemID,
-                                      Name = i.Name ?? "Unknown Item",
-                                      Price = od.Price,
-                                      Quantity = od.Quantity,
-                                      TotalPrice = (od.Quantity ?? 0) * (od.Price ?? 0)
-                                  }).ToListAsync();
+            // Get all order items for this order
+            // Only select columns that exist in OrderDetail table
+            var orderDetails = await (from od in _context.OrderDetails
+                                      where od.OrderID == orderId
+                                      select new Karage.Functions.Models.OrderDetail {
+                                          OrderDetailID = od.OrderDetailID,
+                                          Cost = od.Cost,
+                                          DiscountAmount = od.DiscountAmount,
+                                          ItemID = od.ItemID,
+                                          OrderID = od.OrderID,
+                                          PackageID = od.PackageID,
+                                          Price = od.Price,
+                                          Quantity = od.Quantity,
+                                          StatusID = od.StatusID
+                                      }).ToListAsync();
+
+            // Get all item IDs from order details
+            var itemIds = orderDetails.Select(od => od.ItemID).Distinct().ToList();
+
+            // Get mapping from ItemID+LocationID to UniqueItemID
+            var uniqueItemMappings = await _context.MapUniqueItemIDs
+                .Where(m => itemIds.Contains(m.ItemID) && m.LocationID == orderData.LocationID)
+                .ToListAsync();
+
+            // Get item names
+            var itemsDict = await _context.Items
+                .Where(i => itemIds.Contains(i.ItemID))
+                .ToDictionaryAsync(i => i.ItemID, i => i.Name);
+
+            // Build order items with UniqueItemID
+            var orderItems = orderDetails.Select(od => {
+                int itemId = od.ItemID ?? 0;
+                var uniqueMap = uniqueItemMappings.FirstOrDefault(m => m.ItemID == itemId && m.LocationID == orderData.LocationID);
+                return new OrderItemDto
+                {
+                    ItemID = uniqueMap?.UniqueItemID, // Use UniqueItemID instead of ItemID
+                    Name = itemsDict.TryGetValue(itemId, out var name) ? name ?? "Unknown Item" : "Unknown Item",
+                    Price = od.Price,
+                    Quantity = od.Quantity,
+                    TotalPrice = (od.Quantity ?? 0) * (od.Price ?? 0)
+                };
+            }).ToList();
+
+            // Fetch customer info
+            Customer? customer = null;
+            if (orderData.CustomerID.HasValue)
+            {
+                customer = await _context.Customers.FirstOrDefaultAsync(c => c.CustomerID == orderData.CustomerID.Value);
+            }
 
             var response = new OrderPayloadResponseDto
             {
                 Event = new EventDto { ID = Guid.NewGuid().ToString() },
                 POSBusinessReference = user.CompanyCode ?? string.Empty,
                 LocationID = orderData.LocationID,
-                CustomerID = orderData.CustomerID ?? 0,
+                Customer = new CustomerDto
+                {
+                    Id = orderData.CustomerID ?? 0,
+                    Phone = customer?.Mobile ?? string.Empty
+                },
                 AmountTotal = orderData.AmountTotal,
                 DiscountedAmount = orderData.AmountDiscount,
                 Order = new OrderDto
@@ -130,7 +178,32 @@ public class OrderFunctions
                 OrderItems = orderItems
             };
 
-            return new OkObjectResult(response);
+            // If the order itself has StatusID == 106, add OriginalOrderId to the response
+            var orderStatus = await _context.Orders
+                .Where(o => o.OrderID == orderData.OrderID)
+                .Select(o => o.StatusID)
+                .FirstOrDefaultAsync();
+
+            if (orderStatus == 106)
+            {
+                var responseDict = new Dictionary<string, object?>
+                {
+                    { "Event", response.Event },
+                    { "POSBusinessReference", response.POSBusinessReference },
+                    { "LocationID", response.LocationID },
+                    { "Customer", response.Customer },
+                    { "AmountTotal", response.AmountTotal },
+                    { "DiscountedAmount", response.DiscountedAmount },
+                    { "Order", response.Order },
+                    { "OrderItems", response.OrderItems },
+                    { "OriginalOrderId", orderData.OrderID }
+                };
+                return new OkObjectResult(responseDict);
+            }
+            else
+            {
+                return new OkObjectResult(response);
+            }
         }
         catch (Exception ex)
         {
