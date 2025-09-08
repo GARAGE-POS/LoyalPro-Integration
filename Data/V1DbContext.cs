@@ -22,6 +22,7 @@ public class V1DbContext : DbContext
     public DbSet<OrderDetailPackage> OrderDetailPackages { get; set; }
     public DbSet<Package> Packages { get; set; }
     public DbSet<PackageDetail> PackageDetails { get; set; }
+    public DbSet<functions.Models.MapUniqueItemID> MapUniqueItemIDs { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -96,6 +97,9 @@ public class V1DbContext : DbContext
             .WithMany()
             .HasForeignKey(p => p.LocationID)
             .OnDelete(DeleteBehavior.Restrict);
+
+    // Configure MapUniqueItemID as a keyless entity (view/table without PK)
+    modelBuilder.Entity<functions.Models.MapUniqueItemID>().HasNoKey();
 
         modelBuilder.Entity<Package>()
             .HasOne(p => p.SubCategory)

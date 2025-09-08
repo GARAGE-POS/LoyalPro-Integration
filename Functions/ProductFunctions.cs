@@ -46,40 +46,37 @@ public class ProductFunctions
             int page = int.TryParse(req.Query["page"], out var p) ? Math.Max(1, p) : 1;
             int pageSize = int.TryParse(req.Query["pageSize"], out var ps) ? Math.Clamp(ps, 1, 100) : 20;
 
-            // Get total count first
-            int totalCount = await _context.Items
-                .Include(i => i.SubCategory)
-                    .ThenInclude(sc => sc!.Category)
-                        .ThenInclude(c => c!.Location)
-                            .ThenInclude(l => l!.User)
-                .Where(i => i.StatusID == 1 &&
-                           i.SubCategory!.StatusID == 1 &&
-                           i.SubCategory.Category!.StatusID == 1 &&
-                           i.SubCategory.Category.Location!.User!.UserID == userId)
-                .CountAsync();
 
-            // Execute the query with pagination
-            var products = await _context.Items
-                .Include(i => i.SubCategory)
-                    .ThenInclude(sc => sc!.Category)
-                        .ThenInclude(c => c!.Location)
-                            .ThenInclude(l => l!.User)
-                .Where(i => i.StatusID == 1 &&
-                           i.SubCategory!.StatusID == 1 &&
-                           i.SubCategory.Category!.StatusID == 1 &&
-                           i.SubCategory.Category.Location!.User!.UserID == userId)
-                .Select(i => new
-                {
-                    itemID = i.ItemID,
-                    name = i.Name,
-                    locationID = i.SubCategory!.Category!.Location!.LocationID
-                })
-                .OrderByDescending(i => i.itemID)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
+            // Use MapUniqueItemID for unique product lookup
+            // Only select products for locations owned by this user
+            var userLocationIds = await _context.Locations
+                .Where(l => l.UserID == userId)
+                .Select(l => l.LocationID)
                 .ToListAsync();
 
+
+            var allItems = await _context.MapUniqueItemIDs
+                .Where(m => userLocationIds.Contains(m.LocationID))
+                .ToListAsync();
+
+            var grouped = allItems
+                .GroupBy(m => m.UniqueItemID)
+                .Select(g => g.First())
+                .OrderByDescending(m => m.UniqueItemID)
+                .ToList();
+
+            int totalCount = grouped.Count;
             int totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+
+            var products = grouped
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(m => new
+                {
+                    itemID = m.ItemID,
+                    name = m.ProductName
+                })
+                .ToList();
 
             return new OkObjectResult(new
             {
