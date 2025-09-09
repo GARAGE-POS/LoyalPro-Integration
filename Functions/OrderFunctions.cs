@@ -20,6 +20,7 @@ public class OrderPayloadResponseDto
     public double? DiscountedAmount { get; set; }
     public OrderDto Order { get; set; } = new OrderDto();
     public List<OrderItemDto> OrderItems { get; set; } = new List<OrderItemDto>();
+    public int? OriginalOrderId { get; set; }
 }
 
 public class CustomerDto
@@ -100,7 +101,8 @@ public class OrderFunctions
                                      LocationID = o.LocationID,
                                      CustomerID = o.CustomerID,
                                      AmountTotal = oc.AmountTotal,
-                                     AmountDiscount = oc.AmountDiscount
+                                     AmountDiscount = oc.AmountDiscount,
+                                     StatusID = o.StatusID
                                  }).FirstOrDefaultAsync();
 
             if (orderData == null)
@@ -121,7 +123,9 @@ public class OrderFunctions
                                           PackageID = od.PackageID,
                                           Price = od.Price,
                                           Quantity = od.Quantity,
-                                          StatusID = od.StatusID
+                                          StatusID = od.StatusID,
+                                          RefundQty = od.RefundQty,
+                                          RefundAmount = od.RefundAmount
                                       }).ToListAsync();
 
             // Get all item IDs from order details
@@ -141,13 +145,22 @@ public class OrderFunctions
             var orderItems = orderDetails.Select(od => {
                 int itemId = od.ItemID ?? 0;
                 var uniqueMap = uniqueItemMappings.FirstOrDefault(m => m.ItemID == itemId && m.LocationID == orderData.LocationID);
+                double effectiveQuantity = 0;
+                if (od.StatusID == 202)
+                {
+                    effectiveQuantity = (od.Quantity ?? 0) - (od.RefundQty ?? 0);
+                }
+                else if (od.StatusID == 204)
+                {
+                    effectiveQuantity = od.Quantity ?? 0;
+                }
                 return new OrderItemDto
                 {
                     ItemID = uniqueMap?.UniqueItemID, // Use UniqueItemID instead of ItemID
                     Name = itemsDict.TryGetValue(itemId, out var name) ? name ?? "Unknown Item" : "Unknown Item",
                     Price = od.Price,
-                    Quantity = od.Quantity,
-                    TotalPrice = (od.Quantity ?? 0) * (od.Price ?? 0)
+                    Quantity = effectiveQuantity,
+                    TotalPrice = effectiveQuantity * (od.Price ?? 0)
                 };
             }).ToList();
 
@@ -178,32 +191,14 @@ public class OrderFunctions
                 OrderItems = orderItems
             };
 
-            // If the order itself has StatusID == 106, add OriginalOrderId to the response
-            var orderStatus = await _context.Orders
-                .Where(o => o.OrderID == orderData.OrderID)
-                .Select(o => o.StatusID)
-                .FirstOrDefaultAsync();
+            // If the order itself has StatusID == 106 or 103, set OriginalOrderId in the response
+            var orderStatus = orderData.StatusID;
+            if (orderStatus.HasValue && (orderStatus.Value == 106 || orderStatus.Value == 103))
+            {
+                response.OriginalOrderId = orderData.OrderID;
+            }
 
-            if (orderStatus == 106)
-            {
-                var responseDict = new Dictionary<string, object?>
-                {
-                    { "Event", response.Event },
-                    { "POSBusinessReference", response.POSBusinessReference },
-                    { "LocationID", response.LocationID },
-                    { "Customer", response.Customer },
-                    { "AmountTotal", response.AmountTotal },
-                    { "DiscountedAmount", response.DiscountedAmount },
-                    { "Order", response.Order },
-                    { "OrderItems", response.OrderItems },
-                    { "OriginalOrderId", orderData.OrderID }
-                };
-                return new OkObjectResult(responseDict);
-            }
-            else
-            {
-                return new OkObjectResult(response);
-            }
+            return new OkObjectResult(response);
         }
         catch (Exception ex)
         {

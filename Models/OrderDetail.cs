@@ -27,6 +27,12 @@ public class OrderDetail
 
   public double? DiscountAmount { get; set; }
 
+  public double? RefundQty { get; set; }
+
+  public double? RefundAmount { get; set; }
+
+  public string? OrderMode { get; set; }
+
   // Navigation properties
   [ForeignKey("OrderID")]
   public virtual Orders? Orders { get; set; }
