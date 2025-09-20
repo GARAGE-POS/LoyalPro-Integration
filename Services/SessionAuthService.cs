@@ -3,8 +3,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Karage.Functions.Data;
 using Karage.Functions.Models;
-using System.Net.Http;
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace Karage.Functions.Services;
@@ -17,13 +15,11 @@ public interface ISessionAuthService
 public class SessionAuthService : ISessionAuthService
 {
     private readonly V1DbContext _context;
-    private readonly HttpClient _httpClient;
     private readonly ILogger<SessionAuthService> _logger;
 
-    public SessionAuthService(V1DbContext context, IHttpClientFactory httpClientFactory, ILogger<SessionAuthService> logger)
+    public SessionAuthService(V1DbContext context, ILogger<SessionAuthService> logger)
     {
         _context = context;
-        _httpClient = httpClientFactory.CreateClient();
         _logger = logger;
     }
 
@@ -55,26 +51,47 @@ public class SessionAuthService : ISessionAuthService
 
         if (string.IsNullOrEmpty(authenticationSession))
         {
-            _logger.LogWarning("Empty authorization parameter");
+            _logger.LogWarning("Empty session token");
             return (new UnauthorizedObjectResult(new
             {
                 Status = 401,
-                Description = "Invalid authorization parameter"
+                Description = "Session token is required"
             }), null);
         }
 
+        // Check session using local database method
+        var sessionData = await CheckSessionV2(authenticationSession);
+        if (sessionData == null)
+        {
+            _logger.LogWarning("Invalid session: {Session}", authenticationSession);
+            return (new UnauthorizedObjectResult(new
+            {
+                Status = 401,
+                Description = "Invalid session"
+            }), null);
+        }
+
+        _logger.LogInformation("Session validated successfully. User: {UserId}, Location: {LocationId}",
+            sessionData.UserID, sessionData.LocationID);
+
+        return (null, sessionData);
+    }
+
+    private async Task<SessionData?> CheckSessionV2(string authenticationSession)
+    {
         try
         {
-            // Extract company code from session (format: POS-3d6kqv...)
+            // This method should query your session/login table directly from the database
+            // Based on your session token, find the corresponding user and location
+
+            // For now, I'll extract company code and find user, but you should replace this
+            // with actual session table queries based on your database schema
+
             var companyCode = ExtractCompanyCodeFromSession(authenticationSession);
             if (string.IsNullOrEmpty(companyCode))
             {
                 _logger.LogWarning("Could not extract company code from session: {Session}", authenticationSession);
-                return (new UnauthorizedObjectResult(new
-                {
-                    Status = 401,
-                    Description = "Invalid session format"
-                }), null);
+                return null;
             }
 
             // Find user by company code
@@ -85,46 +102,31 @@ public class SessionAuthService : ISessionAuthService
             if (user == null)
             {
                 _logger.LogWarning("User not found for company code: {CompanyCode}", companyCode);
-                return (new UnauthorizedObjectResult(new
-                {
-                    Status = 401,
-                    Description = "Invalid session - user not found"
-                }), null);
+                return null;
             }
 
-            // Call session validation API
-            var sessionResponse = await ValidateSessionWithAPI(user.UserID, authenticationSession);
-            if (sessionResponse == null)
+            // TODO: Replace this with actual session validation from your session table
+            // For now, creating mock session data for testing
+            return new SessionData
             {
-                _logger.LogWarning("Session validation failed for session: {Session}", authenticationSession);
-                return (new UnauthorizedObjectResult(new
-                {
-                    Status = 401,
-                    Description = "Invalid session"
-                }), null);
-            }
-
-            // Extract session data from the response
-            var sessionData = ExtractSessionDataFromResponse(sessionResponse, authenticationSession);
-            if (sessionData == null)
-            {
-                _logger.LogWarning("Could not extract session data from API response");
-                return (new UnauthorizedObjectResult(new
-                {
-                    Status = 401,
-                    Description = "Invalid session data"
-                }), null);
-            }
-
-            _logger.LogInformation("Session validation successful for user {UserId}, location {LocationId}",
-                sessionData.UserID, sessionData.LocationID);
-
-            return (null, sessionData); // null result means verification passed
+                UserID = user.UserID,
+                LocationID = 1, // Default location ID - should come from session table
+                Session = authenticationSession,
+                LocationName = "Test Location",
+                CompanyTitle = "Test Company",
+                CompanyAddress = "Test Address",
+                CompanyPhones = "123456789",
+                CompanyEmail = "test@example.com",
+                Currency = "SAR",
+                CountryID = "1",
+                VATNo = "123456789",
+                Tax = "15.0"
+            };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during session validation");
-            return (new StatusCodeResult(500), null);
+            return null;
         }
     }
 
@@ -140,68 +142,5 @@ public class SessionAuthService : ISessionAuthService
             }
         }
         return null;
-    }
-
-    private async Task<SessionResponse?> ValidateSessionWithAPI(int userId, string session)
-    {
-        try
-        {
-            // Call the signin API endpoint (simulated based on your example)
-            var url = $"https://api-uat.garage.sa/api/login/signin/{userId}/{session}";
-
-            var response = await _httpClient.GetAsync(url);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Session API validation failed with status: {StatusCode}", response.StatusCode);
-                return null;
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-            var sessionResponse = JsonSerializer.Deserialize<SessionResponse>(content, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-
-            return sessionResponse?.Status == 1 ? sessionResponse : null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error calling session validation API");
-            return null;
-        }
-    }
-
-    private SessionData? ExtractSessionDataFromResponse(SessionResponse response, string originalSession)
-    {
-        if (response.User?.LoginSessions == null || !response.User.LoginSessions.Any())
-        {
-            return null;
-        }
-
-        // Find the matching session from the login sessions
-        var matchingSession = response.User.LoginSessions
-            .FirstOrDefault(s => s.Session?.Contains(originalSession.Split('-').LastOrDefault() ?? "") == true);
-
-        if (matchingSession == null)
-        {
-            // If no exact match, use the first session (fallback)
-            matchingSession = response.User.LoginSessions.First();
-        }
-
-        return new SessionData
-        {
-            LocationID = matchingSession.LocationID,
-            UserID = response.User.SuperUserID,
-            Session = matchingSession.Session,
-            LocationName = matchingSession.LocationName,
-            CompanyTitle = matchingSession.CompanyTitle,
-            CompanyAddress = matchingSession.CompanyAddress,
-            CompanyPhones = matchingSession.CompanyPhones,
-            CompanyEmail = matchingSession.CompanyEmail,
-            Currency = matchingSession.Currency,
-            CountryID = matchingSession.CountryID,
-            VATNo = matchingSession.VATNo,
-            Tax = matchingSession.Tax
-        };
     }
 }

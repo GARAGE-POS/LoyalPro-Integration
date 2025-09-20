@@ -13,6 +13,7 @@ public interface IVomApiService
     Task<T?> PostAsync<T>(string endpoint, object data);
     Task<HttpResponseMessage> PostAsync(string endpoint, object data);
     Task<List<VomUnit>?> GetAllUnitsAsync();
+    Task<List<VomSupplier>?> GetAllSuppliersAsync();
 }
 
 // VOM Unit models
@@ -28,6 +29,28 @@ public class VomUnit
 public class VomUnitsResponse
 {
     public List<VomUnit>? data { get; set; }
+}
+
+// VOM Supplier models
+public class VomSupplier
+{
+    public int id { get; set; }
+    public string? name { get; set; }
+    public string? email { get; set; }
+    public string? phone { get; set; }
+    public string? website { get; set; }
+    public string? address { get; set; }
+    public string? company_name { get; set; }
+    public string? contact_person { get; set; }
+    public string? type { get; set; }
+    public string? notes { get; set; }
+    public DateTime? created_at { get; set; }
+    public DateTime? updated_at { get; set; }
+}
+
+public class VomSuppliersResponse
+{
+    public List<VomSupplier>? data { get; set; }
 }
 
 public class VomApiService : IVomApiService
@@ -218,6 +241,54 @@ public class VomApiService : IVomApiService
         }
 
         _logger.LogError("GET request to /api/products/units failed. Status: {StatusCode}", response.StatusCode);
+        return default;
+    }
+
+    public async Task<List<VomSupplier>?> GetAllSuppliersAsync()
+    {
+        var token = await GetAuthToken();
+        if (string.IsNullOrEmpty(token))
+        {
+            return default;
+        }
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/api/purchases/suppliers");
+        AddCommonHeaders(request);
+        request.Headers.Add("Authorization", $"Bearer {token}");
+
+        var response = await _httpClient.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            var responseContent = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(responseContent);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("data", out var dataElement))
+            {
+                if (dataElement.ValueKind == JsonValueKind.Array)
+                {
+                    return JsonSerializer.Deserialize<List<VomSupplier>>(dataElement.GetRawText());
+                }
+                else if (dataElement.ValueKind == JsonValueKind.Object && dataElement.TryGetProperty("suppliers", out var suppliersElement))
+                {
+                    // Handle case where suppliers are nested under data.suppliers
+                    return JsonSerializer.Deserialize<List<VomSupplier>>(suppliersElement.GetRawText());
+                }
+                else if (dataElement.ValueKind == JsonValueKind.Object)
+                {
+                    var singleSupplier = JsonSerializer.Deserialize<VomSupplier>(dataElement.GetRawText());
+                    return singleSupplier != null ? new List<VomSupplier> { singleSupplier } : new List<VomSupplier>();
+                }
+                else if (dataElement.ValueKind == JsonValueKind.Null)
+                {
+                    return new List<VomSupplier>();
+                }
+            }
+            _logger.LogWarning("Unexpected JSON structure in suppliers response: {Content}", responseContent);
+            return new List<VomSupplier>();
+        }
+
+        _logger.LogError("GET request to /api/purchases/suppliers failed. Status: {StatusCode}", response.StatusCode);
         return default;
     }
 

@@ -213,4 +213,203 @@ public class VomFunctions
             return new StatusCodeResult(500);
         }
     }
+
+    [Function("SyncSuppliersToVom")]
+    public async Task<IActionResult> SyncSuppliersToVom(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
+    {
+        _logger.LogInformation("Sync suppliers to Vom endpoint called.");
+
+        try
+        {
+            // Verify session and get session data
+            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
+            if (authResult != null)
+            {
+                return authResult; // Return unauthorized result
+            }
+
+            if (sessionData == null)
+            {
+                return new BadRequestObjectResult(new { error = "Failed to retrieve session data" });
+            }
+
+            var locationId = sessionData.LocationID;
+            var userId = sessionData.UserID;
+
+            _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId}",
+                userId, locationId);
+
+            // Step 1: Get all suppliers from VOM
+            var vomSuppliers = await _vomApiService.GetAllSuppliersAsync();
+            if (vomSuppliers == null)
+            {
+                return new BadRequestObjectResult(new { error = "Failed to retrieve suppliers from VOM API" });
+            }
+
+            // Step 2: Get all local suppliers with active status for this user
+            var localSuppliers = await _context.Suppliers
+                .Where(s => s.StatusID == 1 && s.UserID == userId) // Only active suppliers for this user
+                .Select(s => new
+                {
+                    s.SupplierID,
+                    name = s.Name ?? string.Empty,
+                    email = s.Email,
+                    phone = s.Phone,
+                    website = s.Website,
+                    address = s.Address,
+                    company_name = s.CompanyName,
+                    contact_person = s.ContactPerson,
+                    type = s.Type,
+                    notes = s.Remarks
+                })
+                .ToListAsync();
+
+            if (!localSuppliers.Any())
+            {
+                return new BadRequestObjectResult(new { error = "No active suppliers found in local database" });
+            }
+
+            var results = new List<object>();
+            var createdCount = 0;
+            var matchedCount = 0;
+
+            // Step 3: Match local suppliers with VOM suppliers and create mappings
+            foreach (var localSupplier in localSuppliers)
+            {
+                try
+                {
+                    // Try to find matching VOM supplier by name
+                    var matchingVomSupplier = vomSuppliers.FirstOrDefault(vs =>
+                        !string.IsNullOrEmpty(vs.name) && vs.name.Equals(localSupplier.name, StringComparison.OrdinalIgnoreCase));
+
+                    int vomSupplierId;
+
+                    if (matchingVomSupplier != null)
+                    {
+                        // Supplier already exists in VOM, use existing ID
+                        vomSupplierId = matchingVomSupplier.id;
+                        matchedCount++;
+
+                        results.Add(new
+                        {
+                            local_supplier_id = localSupplier.SupplierID,
+                            vom_supplier_id = vomSupplierId,
+                            status = "matched",
+                            action = "existing"
+                        });
+                    }
+                    else
+                    {
+                        // Supplier doesn't exist in VOM, create it with required fields
+                        var vomRequest = new
+                        {
+                            name = localSupplier.name,
+                            country_code = "SA", // Default to Saudi Arabia
+                            account_receivable_id = 187, // Default account receivable ID from your example
+                            opening_balance = 0, // Default opening balance
+                            email = localSupplier.email,
+                            phone = localSupplier.phone,
+                            website = localSupplier.website,
+                            address = localSupplier.address,
+                            company_name = localSupplier.company_name,
+                            contact_person = localSupplier.contact_person,
+                            type = localSupplier.type,
+                            notes = localSupplier.notes
+                        };
+
+                        _logger.LogInformation("Attempting to create supplier in VOM: {SupplierName} (ID: {SupplierId}) with payload: {@Payload}",
+                            localSupplier.name, localSupplier.SupplierID, vomRequest);
+
+                        var vomResponse = await _vomApiService.PostAsync<VomSupplier>("/api/purchases/suppliers", vomRequest);
+
+                        if (vomResponse != null && vomResponse.id > 0)
+                        {
+                            vomSupplierId = vomResponse.id;
+                            createdCount++;
+
+                            _logger.LogInformation("Successfully created supplier in VOM: {SupplierName} -> VOM ID: {VomSupplierId}",
+                                localSupplier.name, vomSupplierId);
+
+                            results.Add(new
+                            {
+                                local_supplier_id = localSupplier.SupplierID,
+                                vom_supplier_id = vomSupplierId,
+                                status = "created",
+                                action = "new"
+                            });
+                        }
+                        else
+                        {
+                            _logger.LogError("Failed to create supplier {SupplierName} (ID: {SupplierId}) in VOM. Response was null or invalid",
+                                localSupplier.name, localSupplier.SupplierID);
+
+                            results.Add(new
+                            {
+                                local_supplier_id = localSupplier.SupplierID,
+                                status = "failed",
+                                error = "Failed to create supplier in VOM - check logs for details"
+                            });
+                            continue; // Skip mapping creation
+                        }
+                    }
+
+                    // Step 4: Create or update mapping (suppliers can have different VOM mappings per location)
+                    var existingMapping = await _context.SupplierMappings
+                        .FirstOrDefaultAsync(sm => sm.SupplierId == localSupplier.SupplierID && sm.LocationId == locationId);
+
+                    if (existingMapping != null)
+                    {
+                        // Update existing mapping
+                        _logger.LogInformation("Updating existing mapping for Supplier ID {SupplierId} -> VOM Supplier ID {VomSupplierId}",
+                            localSupplier.SupplierID, vomSupplierId);
+                        existingMapping.VomSupplierId = vomSupplierId;
+                        existingMapping.UpdatedAt = DateTime.UtcNow;
+                    }
+                    else
+                    {
+                        // Create new mapping
+                        _logger.LogInformation("Creating new mapping for Supplier ID {SupplierId} -> VOM Supplier ID {VomSupplierId} at Location {LocationId}",
+                            localSupplier.SupplierID, vomSupplierId, locationId);
+
+                        var mapping = new SupplierMapping
+                        {
+                            SupplierId = localSupplier.SupplierID,
+                            VomSupplierId = vomSupplierId,
+                            LocationId = locationId
+                        };
+                        _context.SupplierMappings.Add(mapping);
+                    }
+
+                    await _context.SaveChangesAsync();
+                    _logger.LogInformation("Successfully saved mapping for Supplier ID {SupplierId}", localSupplier.SupplierID);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"Error processing supplier {localSupplier.SupplierID}");
+                    results.Add(new
+                    {
+                        local_supplier_id = localSupplier.SupplierID,
+                        status = "failed",
+                        error = ex.Message
+                    });
+                }
+            }
+
+            return new OkObjectResult(new
+            {
+                message = "Supplier sync completed",
+                total_local_suppliers = localSuppliers.Count,
+                total_vom_suppliers = vomSuppliers.Count,
+                created_suppliers = createdCount,
+                matched_suppliers = matchedCount,
+                results = results
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in SyncSuppliersToVom function");
+            return new StatusCodeResult(500);
+        }
+    }
 }

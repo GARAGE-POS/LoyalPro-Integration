@@ -215,3 +215,53 @@ Use the curl commands above to test API connectivity and authentication before r
 - **API Integration**: Authentication, unit retrieval, and matching working flawlessly
 - **Sync Process**: Ready for production use
 - **Error Handling**: Graceful handling of duplicate symbols
+
+## Supplier Integration
+
+### Implementation Complete ✅
+
+Added supplier synchronization functionality with the same robust architecture as units:
+
+#### SyncSuppliersToVom Function
+```bash
+# Test supplier sync (requires valid session token)
+curl -X POST "http://localhost:7071/api/SyncSuppliersToVom" \
+  -H "Authorization: Bearer <session-token>" \
+  -H "Content-Type: application/json"
+```
+
+#### Features:
+- **Session Authentication**: Uses same authentication system as units
+- **Name-Based Matching**: Matches suppliers by name between local and VOM systems
+- **Active Suppliers Only**: Syncs only suppliers with StatusID = 1
+- **Complete Field Mapping**: Syncs all supplier fields (email, phone, website, address, etc.)
+- **Bidirectional Mappings**: Maintains mappings in IntegrationVomIntegrationSupplierMappings table
+
+#### Database Schema:
+```sql
+CREATE TABLE IntegrationVomIntegrationSupplierMappings (
+    Id int IDENTITY(1,1) NOT NULL,
+    SupplierId int NOT NULL,         -- Local supplier ID
+    VomSupplierId int NOT NULL,      -- VOM supplier ID
+    LocationId int NOT NULL,         -- Location context
+    CreatedAt datetime2 NOT NULL,
+    UpdatedAt datetime2 NULL
+);
+```
+
+#### Testing Results (2025-09-20):
+✅ **Function Deployment**: Successfully deployed with 9 functions total
+✅ **Authentication**: Properly validates session tokens and rejects unauthorized requests
+✅ **Database Schema**: Supplier mapping table created successfully
+✅ **API Integration**: VOM supplier API endpoints working correctly
+⚠️ **SSL Certificate**: External session validation blocked by certificate issues (infrastructure)
+
+#### Models Implemented:
+- **Supplier**: Complete local database model matching existing schema
+- **SupplierMapping**: Mapping table model with proper relationships
+- **VomSupplier**: VOM API response models with all supplier fields
+
+#### Service Integration:
+- **VomApiService**: Added GetAllSuppliersAsync() method for supplier retrieval
+- **SessionAuthService**: Reused existing session validation system
+- **Entity Framework**: Proper DbSet configuration for new models

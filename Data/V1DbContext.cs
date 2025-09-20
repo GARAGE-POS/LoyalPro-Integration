@@ -25,6 +25,8 @@ public class V1DbContext : DbContext
     public DbSet<functions.Models.MapUniqueItemID> MapUniqueItemIDs { get; set; }
     public DbSet<Unit> Units { get; set; }
     public DbSet<UnitMapping> UnitMappings { get; set; }
+    public DbSet<Supplier> Suppliers { get; set; }
+    public DbSet<SupplierMapping> SupplierMappings { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
