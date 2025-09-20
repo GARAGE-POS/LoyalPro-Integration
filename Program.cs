@@ -43,6 +43,9 @@ builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
 // Register VOM API Service
 builder.Services.AddScoped<IVomApiService, VomApiService>();
 
+// Register Session Authentication Service
+builder.Services.AddScoped<ISessionAuthService, SessionAuthService>();
+
 // Add HttpClient factory
 builder.Services.AddHttpClient();
 

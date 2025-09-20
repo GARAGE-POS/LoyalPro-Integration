@@ -18,6 +18,7 @@ public class VomFunctions
     private readonly ILogger<VomFunctions> _logger;
     private readonly V1DbContext _context;
     private readonly IApiKeyService _apiKeyService;
+    private readonly ISessionAuthService _sessionAuthService;
     private readonly IVomApiService _vomApiService;
     private readonly HttpClient _httpClient;
 
@@ -25,12 +26,14 @@ public class VomFunctions
         ILogger<VomFunctions> logger,
         V1DbContext context,
         IApiKeyService apiKeyService,
+        ISessionAuthService sessionAuthService,
         IVomApiService vomApiService,
         IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _context = context;
         _apiKeyService = apiKeyService;
+        _sessionAuthService = sessionAuthService;
         _vomApiService = vomApiService;
         _httpClient = httpClientFactory.CreateClient();
     }
@@ -43,25 +46,23 @@ public class VomFunctions
 
         try
         {
-            /*var verificationResult = await _apiKeyService.VerifyApiKey(req);
-            if (verificationResult != null)
+            // Verify session and get session data
+            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
+            if (authResult != null)
             {
-                return verificationResult;
-            }*/
-
-            // Get location_id from query parameters
-            var locationIdParam = req.Query["location_id"].ToString();
-            if (string.IsNullOrEmpty(locationIdParam) || !int.TryParse(locationIdParam, out var locationId))
-            {
-                return new BadRequestObjectResult(new { error = "Valid location_id is required" });
+                return authResult; // Return unauthorized result
             }
 
-            // Get user_id from query parameters
-            var userIdParam = req.Query["user_id"].ToString();
-            if (string.IsNullOrEmpty(userIdParam) || !int.TryParse(userIdParam, out var userId))
+            if (sessionData == null)
             {
-                return new BadRequestObjectResult(new { error = "Valid user_id is required" });
+                return new BadRequestObjectResult(new { error = "Failed to retrieve session data" });
             }
+
+            var locationId = sessionData.LocationID;
+            var userId = sessionData.UserID;
+
+            _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId}",
+                userId, locationId);
 
             // Step 1: Get all units from VOM
             var vomUnits = await _vomApiService.GetAllUnitsAsync();

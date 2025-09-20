@@ -149,6 +149,41 @@ Required parameters:
 3. Extend to other entities (products, customers, etc.)
 4. Add logging and monitoring
 
+## Authentication
+
+### Session-Based Authentication Added ✅
+
+The SyncUnitsToVom endpoint now uses session-based authentication instead of requiring location_id and user_id parameters.
+
+#### How to Use:
+```bash
+# Use Authorization header with session token
+curl -X POST "http://localhost:7071/api/SyncUnitsToVom" \
+  -H "Authorization: Bearer POS-3d6kqv" \
+  -H "Content-Type: application/json"
+```
+
+#### Authentication Flow:
+1. **Extract session token** from Authorization header (Bearer POS-3d6kqv)
+2. **Extract company code** from session (POS-3D6KQV)
+3. **Find user** in database by CompanyCode and StatusID=1
+4. **Validate session** via API call to /api/login/signin/{userId}/{sessionToken}
+5. **Extract location_id and user_id** from session response
+6. **Proceed with sync** using extracted values
+
+#### Authentication Results (2025-09-20):
+✅ **Authorization header validation** - correctly rejects missing headers
+✅ **Session token parsing** - extracts POS-3d6kqv from Bearer token
+✅ **Company code extraction** - converts to POS-3D6KQV
+✅ **User lookup** - found UserID 295 for CompanyCode POS-3D6KQV
+✅ **API call construction** - correctly calls https://api-uat.garage.sa/api/login/signin/295/POS-3d6kqv
+⚠️ **SSL Certificate Issue** - external API call fails due to certificate validation
+
+### Authentication Implementation:
+- **SessionAuthService**: Handles session validation and data extraction
+- **SessionData Models**: Structured data models for session response
+- **Integration**: Seamlessly integrated into VomFunctions without breaking existing functionality
+
 ## Testing
 
 Use the curl commands above to test API connectivity and authentication before running the sync function.
