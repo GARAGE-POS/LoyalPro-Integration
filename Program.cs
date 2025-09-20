@@ -40,6 +40,12 @@ catch (Exception ex)
 // Register API Key Service
 builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
 
+// Register VOM API Service
+builder.Services.AddScoped<IVomApiService, VomApiService>();
+
+// Add HttpClient factory
+builder.Services.AddHttpClient();
+
 // Add global exception handler
 builder.Services.AddLogging(logging =>
 {

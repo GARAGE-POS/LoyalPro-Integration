@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//tmp/**)",
+      "WebFetch(domain:app.getvom.com)",
+      "Bash(func start)",
+      "Bash(dotnet restore:*)",
+      "Bash(npm install:*)",
+      "Bash(dotnet build)",
+      "Bash(bash)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -23,6 +23,8 @@ public class V1DbContext : DbContext
     public DbSet<Package> Packages { get; set; }
     public DbSet<PackageDetail> PackageDetails { get; set; }
     public DbSet<functions.Models.MapUniqueItemID> MapUniqueItemIDs { get; set; }
+    public DbSet<Unit> Units { get; set; }
+    public DbSet<UnitMapping> UnitMappings { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

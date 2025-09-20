@@ -13,8 +13,10 @@
     "onAutoForward": "ignore"
   },
   "features": {
-    "ghcr.io/jlaundry/devcontainer-features/azure-functions-core-tools:1": {}
-  },
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/devcontainers/features/azure-cli:1": {}
+  },  
+  "postCreateCommand": "npm install -g azure-functions-core-tools@4 --unsafe-perm true && npm install -g @anthropic-ai/claude-code",
   "customizations": {
     "vscode": {
       "extensions": [

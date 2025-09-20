@@ -7,6 +7,13 @@
                 "excludedTypes": "Request"
             },
             "enableLiveMetricsFilters": true
+        },
+        "fileLoggingMode": "always",
+        "logLevel": {
+            "default": "Information",
+            "Host.Results": "Error",
+            "Function": "Information",
+            "Microsoft": "Warning"
         }
     }
 }
