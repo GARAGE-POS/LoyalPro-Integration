@@ -28,6 +28,7 @@ public class V1DbContext : DbContext
     public DbSet<Supplier> Suppliers { get; set; }
     public DbSet<SupplierMapping> SupplierMappings { get; set; }
     public DbSet<CategoryMapping> CategoryMappings { get; set; }
+    public DbSet<ProductMapping> ProductMappings { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -637,4 +637,334 @@ public class VomFunctions
             return new StatusCodeResult(500);
         }
     }
+
+    [Function("SyncProductsToVom")]
+    public async Task<IActionResult> SyncProductsToVom(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
+    {
+        _logger.LogInformation("Sync products to Vom endpoint called.");
+
+        try
+        {
+            // Verify session and get session data
+            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
+            if (authResult != null)
+            {
+                return authResult; // Return unauthorized result
+            }
+
+            if (sessionData == null)
+            {
+                return new BadRequestObjectResult(new { error = "Failed to retrieve session data" });
+            }
+
+            var locationId = sessionData.LocationID;
+            var userId = sessionData.UserID;
+
+            _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId}",
+                userId, locationId);
+
+            // Step 1: Get user's locations (following ProductFunctions.cs pattern)
+            var userLocationIds = await _context.Locations
+                .Where(l => l.UserID == userId)
+                .Select(l => l.LocationID)
+                .ToListAsync();
+
+            _logger.LogInformation("Found {LocationCount} locations for user {UserId}: {LocationIds}",
+                userLocationIds.Count, userId, string.Join(", ", userLocationIds));
+
+            // Step 2: Get unique products across user's locations (following ProductFunctions.cs pattern)
+            var uniqueItems = await _context.MapUniqueItemIDs
+                .Where(m => userLocationIds.Contains(m.LocationID))
+                .GroupBy(m => m.UniqueItemID)
+                .Select(g => g.First())
+                .ToListAsync();
+
+            _logger.LogInformation("Found {UniqueItemCount} unique items across user's locations", uniqueItems.Count);
+
+            if (!uniqueItems.Any())
+            {
+                _logger.LogWarning("No products found in MapUniqueItemID table for user's locations. Falling back to direct Items query.");
+
+                // Fallback: Query Items table directly for this user's locations
+                var directItems = await _context.Items
+                    .Join(_context.SubCategories, item => item.SubCatID, subcat => subcat.SubCategoryID, (item, subcat) => new { item, subcat })
+                    .Join(_context.Categories, x => x.subcat.CategoryID, cat => cat.CategoryID, (x, cat) => new { x.item, x.subcat, cat })
+                    .Join(_context.Locations, x => x.cat.LocationID, loc => loc.LocationID, (x, loc) => new { x.item, x.subcat, x.cat, loc })
+                    .Where(x => userLocationIds.Contains(x.cat.LocationID ?? 0))
+                    .Select(x => new functions.Models.MapUniqueItemID {
+                        ItemID = x.item.ItemID,
+                        LocationID = x.cat.LocationID ?? 0,
+                        ProductName = x.item.Name ?? "",
+                        LocationName = x.loc.Name ?? "",
+                        UniqueItemID = x.item.ItemID
+                    })
+                    .GroupBy(x => x.ItemID)
+                    .Select(g => g.First())
+                    .ToListAsync();
+
+                if (!directItems.Any())
+                {
+                    return new BadRequestObjectResult(new {
+                        error = "No products found for this user's locations",
+                        debug_info = new {
+                            user_locations = userLocationIds,
+                            message = "Both MapUniqueItemID and direct Items query returned no results"
+                        }
+                    });
+                }
+
+                uniqueItems = directItems;
+                _logger.LogInformation("Found {DirectItemCount} products using direct Items query", directItems.Count);
+            }
+
+            // Step 3: Get detailed product information with category and unit data
+            var itemIds = uniqueItems.Select(ui => ui.ItemID).ToList();
+            var localProducts = await _context.Items
+                .Where(i => itemIds.Contains(i.ItemID))
+                .Select(i => new
+                {
+                    i.ItemID,
+                    i.Name,
+                    i.Description,
+                    i.Price,
+                    i.Cost,
+                    i.Barcode,
+                    CategoryID = i.SubCategory != null ? i.SubCategory.CategoryID : (int?)null,
+                    i.SubCatID,
+                    i.UnitID,
+                    CategoryName = i.SubCategory != null && i.SubCategory.Category != null ? i.SubCategory.Category.Name : null,
+                    UnitName = default(string) // We'll need to query Units separately if needed
+                })
+                .ToListAsync();
+
+            _logger.LogInformation("Retrieved detailed information for {ProductCount} products", localProducts.Count);
+
+            // Step 4: Get all products from VOM (currently returns empty list, but ready for future)
+            var vomProducts = await _vomApiService.GetAllProductsAsync();
+            if (vomProducts == null)
+            {
+                vomProducts = new List<VomProduct>(); // Initialize as empty if null
+            }
+
+            var results = new List<object>();
+            var createdCount = 0;
+            var matchedCount = 0;
+            var failedCount = 0;
+            var missingCategoryMappings = 0;
+            var missingUnitMappings = 0;
+
+            // Step 5: Process each product
+            foreach (var localProduct in localProducts)
+            {
+                try
+                {
+                    _logger.LogInformation("Processing product: {ProductName} (ID: {ItemId})", localProduct.Name, localProduct.ItemID);
+
+                    // Check for existing VOM product mapping first
+                    var existingMapping = await _context.ProductMappings
+                        .FirstOrDefaultAsync(pm => pm.ItemId == localProduct.ItemID && pm.LocationId == locationId);
+
+                    if (existingMapping != null)
+                    {
+                        matchedCount++;
+                        results.Add(new
+                        {
+                            local_item_id = localProduct.ItemID,
+                            vom_product_id = existingMapping.VomProductId,
+                            status = "already_mapped",
+                            action = "existing_mapping"
+                        });
+                        _logger.LogInformation("Product {ProductName} already has VOM mapping: {VomProductId}",
+                            localProduct.Name, existingMapping.VomProductId);
+                        continue;
+                    }
+
+                    // Try to find matching VOM product by barcode or name
+                    VomProduct? matchingVomProduct = null;
+
+                    if (!string.IsNullOrEmpty(localProduct.Barcode))
+                    {
+                        matchingVomProduct = vomProducts.FirstOrDefault(vp =>
+                            !string.IsNullOrEmpty(vp.barcode) && vp.barcode.Equals(localProduct.Barcode, StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    if (matchingVomProduct == null)
+                    {
+                        matchingVomProduct = vomProducts.FirstOrDefault(vp =>
+                            !string.IsNullOrEmpty(vp.name_en) && vp.name_en.Equals(localProduct.Name, StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    int vomProductId;
+
+                    if (matchingVomProduct != null)
+                    {
+                        // Product already exists in VOM, use existing ID
+                        vomProductId = matchingVomProduct.id;
+                        matchedCount++;
+
+                        results.Add(new
+                        {
+                            local_item_id = localProduct.ItemID,
+                            vom_product_id = vomProductId,
+                            status = "matched",
+                            action = "existing"
+                        });
+
+                        _logger.LogInformation("Found matching VOM product for {ProductName}: VOM ID {VomProductId}",
+                            localProduct.Name, vomProductId);
+                    }
+                    else
+                    {
+                        // Product doesn't exist in VOM, need to create it
+
+                        // First, resolve category mapping
+                        int? vomCategoryId = null;
+                        if (localProduct.CategoryID.HasValue)
+                        {
+                            var categoryMapping = await _context.CategoryMappings
+                                .FirstOrDefaultAsync(cm => cm.CategoryId == localProduct.CategoryID && cm.LocationId == locationId);
+
+                            if (categoryMapping != null)
+                            {
+                                vomCategoryId = categoryMapping.VomCategoryId;
+                            }
+                            else
+                            {
+                                missingCategoryMappings++;
+                                _logger.LogWarning("No VOM category mapping found for local CategoryID {CategoryId} at location {LocationId}. Using default category.",
+                                    localProduct.CategoryID, locationId);
+                                vomCategoryId = 1; // Default category
+                            }
+                        }
+                        else
+                        {
+                            vomCategoryId = 1; // Default category if no local category
+                        }
+
+                        // Resolve unit mapping
+                        int? vomUnitId = null;
+                        if (localProduct.UnitID.HasValue)
+                        {
+                            var unitMapping = await _context.UnitMappings
+                                .FirstOrDefaultAsync(um => um.UnitId == localProduct.UnitID && um.LocationId == locationId);
+
+                            if (unitMapping != null)
+                            {
+                                vomUnitId = unitMapping.VomUnitId;
+                            }
+                            else
+                            {
+                                missingUnitMappings++;
+                                _logger.LogWarning("No VOM unit mapping found for local UnitID {UnitId} at location {LocationId}. Using default unit.",
+                                    localProduct.UnitID, locationId);
+                                vomUnitId = 4; // Default piece unit (based on existing code)
+                            }
+                        }
+                        else
+                        {
+                            vomUnitId = 4; // Default piece unit
+                        }
+
+                        // Create VOM product request
+                        var vomRequest = new
+                        {
+                            name_en = localProduct.Name ?? "Unknown Product",
+                            name_ar = localProduct.Name ?? "Unknown Product", // Use same as English since we don't have Arabic
+                            description = localProduct.Description,
+                            buying_price = (decimal)(localProduct.Cost ?? 0),
+                            selling_price = (decimal)(localProduct.Price ?? 0),
+                            category_id = vomCategoryId,
+                            unit_id = vomUnitId,
+                            barcode = localProduct.Barcode,
+                            type = "product", // Default type
+                            warehouse_id = 1, // Default main warehouse
+                            quantity = 0, // Default quantity
+                            is_active = true
+                        };
+
+                        _logger.LogInformation("Attempting to create product in VOM: {ProductName} (ID: {ItemId}) with payload: {@Payload}",
+                            localProduct.Name, localProduct.ItemID, vomRequest);
+
+                        var vomResponse = await _vomApiService.PostAsync<VomProduct>("/api/products", vomRequest);
+
+                        if (vomResponse != null && vomResponse.id > 0)
+                        {
+                            vomProductId = vomResponse.id;
+                            createdCount++;
+
+                            _logger.LogInformation("Successfully created product in VOM: {ProductName} -> VOM ID: {VomProductId}",
+                                localProduct.Name, vomProductId);
+
+                            results.Add(new
+                            {
+                                local_item_id = localProduct.ItemID,
+                                vom_product_id = vomProductId,
+                                status = "created",
+                                action = "new"
+                            });
+                        }
+                        else
+                        {
+                            failedCount++;
+                            _logger.LogError("Failed to create product {ProductName} (ID: {ItemId}) in VOM. Response was null or invalid",
+                                localProduct.Name, localProduct.ItemID);
+
+                            results.Add(new
+                            {
+                                local_item_id = localProduct.ItemID,
+                                status = "failed",
+                                error = "Failed to create product in VOM - check logs for details"
+                            });
+                            continue; // Skip mapping creation
+                        }
+                    }
+
+                    // Step 6: Create or update mapping
+                    var mapping = new ProductMapping
+                    {
+                        ItemId = localProduct.ItemID,
+                        VomProductId = vomProductId,
+                        LocationId = locationId
+                    };
+                    _context.ProductMappings.Add(mapping);
+
+                    await _context.SaveChangesAsync();
+                    _logger.LogInformation("Successfully saved mapping for Product ID {ItemId} -> VOM Product ID {VomProductId}",
+                        localProduct.ItemID, vomProductId);
+                }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    _logger.LogError(ex, $"Error processing product {localProduct.ItemID}");
+                    results.Add(new
+                    {
+                        local_item_id = localProduct.ItemID,
+                        status = "failed",
+                        error = ex.Message
+                    });
+                }
+            }
+
+            return new OkObjectResult(new
+            {
+                message = "Product sync completed",
+                total_unique_products = uniqueItems.Count,
+                total_local_products = localProducts.Count,
+                total_vom_products = vomProducts.Count,
+                created_products = createdCount,
+                matched_products = matchedCount,
+                failed_products = failedCount,
+                missing_category_mappings = missingCategoryMappings,
+                missing_unit_mappings = missingUnitMappings,
+                user_locations = userLocationIds,
+                results = results
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in SyncProductsToVom function");
+            return new StatusCodeResult(500);
+        }
+    }
 }

@@ -46,7 +46,19 @@ builder.Services.AddScoped<IVomApiService, VomApiService>();
 // Register Session Authentication Service
 builder.Services.AddScoped<ISessionAuthService, SessionAuthService>();
 
-// Add HttpClient factory
+// Add HttpClient factory with SSL bypass for session endpoint
+builder.Services.AddHttpClient<VomApiService>(client =>
+{
+    // Configure client defaults if needed
+}).ConfigurePrimaryHttpMessageHandler(() =>
+{
+    var handler = new HttpClientHandler();
+    // Skip SSL verification for the session endpoint (HTTP)
+    handler.ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true;
+    return handler;
+});
+
+// Add default HttpClient for other services
 builder.Services.AddHttpClient();
 
 // Add global exception handler
