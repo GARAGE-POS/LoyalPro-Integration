@@ -14,6 +14,7 @@ public interface IVomApiService
     Task<HttpResponseMessage> PostAsync(string endpoint, object data);
     Task<List<VomUnit>?> GetAllUnitsAsync();
     Task<List<VomSupplier>?> GetAllSuppliersAsync();
+    Task<List<VomCategory>?> GetAllCategoriesAsync();
 }
 
 // VOM Unit models
@@ -51,6 +52,25 @@ public class VomSupplier
 public class VomSuppliersResponse
 {
     public List<VomSupplier>? data { get; set; }
+}
+
+// VOM Category models
+public class VomCategory
+{
+    public int id { get; set; }
+    public string? name { get; set; }
+    public string? description { get; set; }
+    public string? image { get; set; }
+    public int? parent_id { get; set; }
+    public int? sort_order { get; set; }
+    public bool? is_active { get; set; }
+    public DateTime? created_at { get; set; }
+    public DateTime? updated_at { get; set; }
+}
+
+public class VomCategoriesResponse
+{
+    public List<VomCategory>? data { get; set; }
 }
 
 public class VomApiService : IVomApiService
@@ -289,6 +309,54 @@ public class VomApiService : IVomApiService
         }
 
         _logger.LogError("GET request to /api/purchases/suppliers failed. Status: {StatusCode}", response.StatusCode);
+        return default;
+    }
+
+    public async Task<List<VomCategory>?> GetAllCategoriesAsync()
+    {
+        var token = await GetAuthToken();
+        if (string.IsNullOrEmpty(token))
+        {
+            return default;
+        }
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/api/products/categories");
+        AddCommonHeaders(request);
+        request.Headers.Add("Authorization", $"Bearer {token}");
+
+        var response = await _httpClient.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            var responseContent = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(responseContent);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("data", out var dataElement))
+            {
+                if (dataElement.ValueKind == JsonValueKind.Array)
+                {
+                    return JsonSerializer.Deserialize<List<VomCategory>>(dataElement.GetRawText());
+                }
+                else if (dataElement.ValueKind == JsonValueKind.Object && dataElement.TryGetProperty("categories", out var categoriesElement))
+                {
+                    // Handle case where categories are nested under data.categories
+                    return JsonSerializer.Deserialize<List<VomCategory>>(categoriesElement.GetRawText());
+                }
+                else if (dataElement.ValueKind == JsonValueKind.Object)
+                {
+                    var singleCategory = JsonSerializer.Deserialize<VomCategory>(dataElement.GetRawText());
+                    return singleCategory != null ? new List<VomCategory> { singleCategory } : new List<VomCategory>();
+                }
+                else if (dataElement.ValueKind == JsonValueKind.Null)
+                {
+                    return new List<VomCategory>();
+                }
+            }
+            _logger.LogWarning("Unexpected JSON structure in categories response: {Content}", responseContent);
+            return new List<VomCategory>();
+        }
+
+        _logger.LogError("GET request to /api/products/categories failed. Status: {StatusCode}", response.StatusCode);
         return default;
     }
 
