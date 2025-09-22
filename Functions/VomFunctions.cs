@@ -886,7 +886,7 @@ public class VomFunctions
                         _logger.LogInformation("Attempting to create product in VOM: {ProductName} (ID: {ItemId}) with payload: {@Payload}",
                             localProduct.Name, localProduct.ItemID, vomRequest);
 
-                        var vomResponse = await _vomApiService.PostAsync<VomProduct>("/api/products", vomRequest);
+                        var vomResponse = await _vomApiService.PostAsync<VomProduct>("/api/products/products", vomRequest);
 
                         if (vomResponse != null && vomResponse.id > 0)
                         {

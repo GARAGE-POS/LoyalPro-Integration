@@ -29,6 +29,9 @@ public class V1DbContext : DbContext
     public DbSet<SupplierMapping> SupplierMappings { get; set; }
     public DbSet<CategoryMapping> CategoryMappings { get; set; }
     public DbSet<ProductMapping> ProductMappings { get; set; }
+    public DbSet<Discount> Discounts { get; set; }
+    public DbSet<SessionInfo> SessionInfos { get; set; }
+    public DbSet<SubUser> SubUsers { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -220,6 +223,10 @@ public class V1DbContext : DbContext
 
         modelBuilder.Entity<PackageDetail>()
             .Property(pd => pd.Price)
+            .HasColumnType("float");
+
+        modelBuilder.Entity<Discount>()
+            .Property(d => d.Value)
             .HasColumnType("float");
     }
 }

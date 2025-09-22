@@ -66,7 +66,7 @@ public class UserData
     public string? VATNo { get; set; }
     public string? Tax { get; set; }
     public string? CompanyCode { get; set; }
-    public List<SessionData>? LoginSessions { get; set; }
+    public List<LoginSessionData>? LoginSessions { get; set; }
 }
 
 public class RoleData
@@ -109,4 +109,52 @@ public class AppSourceData
     public int SourceID { get; set; }
     public string? Name { get; set; }
     public string? ArabicName { get; set; }
+}
+
+public class LoginSessionData
+{
+    public List<DiscountData>? DiscountsList { get; set; }
+    public int LocationID { get; set; }
+    public string? Session { get; set; }
+    public string? LocationName { get; set; }
+    public string? CompanyTitle { get; set; }
+    public string? CompanyAddress { get; set; }
+    public string? CompanyPhones { get; set; }
+    public string? CompanyFax { get; set; }
+    public string? CompanyEmail { get; set; }
+    public string? CompanyWebsite { get; set; }
+    public string? Promotiontagline { get; set; }
+    public string? Companytagline { get; set; }
+    public string? CompanyLogoURL { get; set; }
+    public string? Footer { get; set; }
+    public string? FacebookLink { get; set; }
+    public string? TwitterLink { get; set; }
+    public string? InstagramLink { get; set; }
+    public string? SnapchatLink { get; set; }
+    public string? TikTokLink { get; set; }
+    public string? Currency { get; set; }
+    public string? CountryID { get; set; }
+    public string? VATNo { get; set; }
+    public string? Tax { get; set; }
+    public string? QRTagline { get; set; }
+    public string? QRLink { get; set; }
+}
+
+public class DiscountData
+{
+    public int DiscountID { get; set; }
+    public string? Name { get; set; }
+    public string? DiscountType { get; set; }
+    public decimal Value { get; set; }
+    public DateTime FromDate { get; set; }
+    public DateTime ToDate { get; set; }
+    public DateTime? FromTime { get; set; }
+    public DateTime? ToTime { get; set; }
+    public int LocationID { get; set; }
+    public DateTime LastUpdatedDate { get; set; }
+    public string? LastUpdatedBy { get; set; }
+    public int StatusID { get; set; }
+    public bool IsCouponCode { get; set; }
+    public string? Code { get; set; }
+    public int NoOfRedemption { get; set; }
 }

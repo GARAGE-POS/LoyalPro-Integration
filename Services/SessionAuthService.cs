@@ -81,46 +81,54 @@ public class SessionAuthService : ISessionAuthService
     {
         try
         {
-            // This method should query your session/login table directly from the database
-            // Based on your session token, find the corresponding user and location
-
-            // For now, I'll extract company code and find user, but you should replace this
-            // with actual session table queries based on your database schema
-
-            var companyCode = ExtractCompanyCodeFromSession(authenticationSession);
-            if (string.IsNullOrEmpty(companyCode))
-            {
-                _logger.LogWarning("Could not extract company code from session: {Session}", authenticationSession);
-                return null;
-            }
-
-            // Find user by company code
-            var user = await _context.Users
-                .Where(u => u.CompanyCode == companyCode && u.StatusID == 1)
+            // Validate session using local database SessionInfo table
+            var sessionInfo = await _context.SessionInfos
+                .Include(s => s.SubUser)
+                .Include(s => s.Location)
+                .Where(s => s.SessionId == authenticationSession && s.StatusID == 1)
                 .FirstOrDefaultAsync();
 
-            if (user == null)
+            if (sessionInfo == null)
             {
-                _logger.LogWarning("User not found for company code: {CompanyCode}", companyCode);
+                _logger.LogWarning("Session not found in database: {Session}", authenticationSession);
                 return null;
             }
 
-            // TODO: Replace this with actual session validation from your session table
-            // For now, creating mock session data for testing
+            // Get user information from SubUser
+            var subUser = sessionInfo.SubUser;
+            if (subUser == null)
+            {
+                _logger.LogWarning("SubUser not found for session: {Session}, SubUserId: {SubUserId}",
+                    authenticationSession, sessionInfo.SubUserId);
+                return null;
+            }
+
+            // Get location information
+            var location = sessionInfo.Location;
+            if (location == null)
+            {
+                _logger.LogWarning("Location not found for session: {Session}, LocationId: {LocationId}",
+                    authenticationSession, sessionInfo.LocationID);
+                return null;
+            }
+
+            _logger.LogInformation("Session validated successfully from database. SubUser: {SubUserId}, Location: {LocationId}",
+                sessionInfo.SubUserId, sessionInfo.LocationID);
+
             return new SessionData
             {
-                UserID = user.UserID,
-                LocationID = 1, // Default location ID - should come from session table
-                Session = authenticationSession,
-                LocationName = "Test Location",
-                CompanyTitle = "Test Company",
-                CompanyAddress = "Test Address",
-                CompanyPhones = "123456789",
-                CompanyEmail = "test@example.com",
-                Currency = "SAR",
-                CountryID = "1",
-                VATNo = "123456789",
-                Tax = "15.0"
+                UserID = subUser.SuperUserID,
+                LocationID = sessionInfo.LocationID,
+                Session = sessionInfo.SessionId,
+                LocationName = location.Name,
+                CompanyTitle = location.Name, // Using location name as company title
+                CompanyAddress = location.Address,
+                CompanyPhones = location.ContactNo,
+                CompanyEmail = location.Email,
+                Currency = sessionInfo.Currency ?? "SAR",
+                CountryID = location.CountryID,
+                VATNo = location.VATNO,
+                Tax = location.Tax?.ToString() ?? "15"
             };
         }
         catch (Exception ex)
@@ -130,17 +138,4 @@ public class SessionAuthService : ISessionAuthService
         }
     }
 
-    private string? ExtractCompanyCodeFromSession(string session)
-    {
-        // Session format: POS-3d6kqv... or POS-3D6KQV...
-        if (session.StartsWith("POS-", StringComparison.OrdinalIgnoreCase))
-        {
-            var parts = session.Split('-');
-            if (parts.Length >= 2)
-            {
-                return $"POS-{parts[1].Substring(0, Math.Min(6, parts[1].Length)).ToUpper()}";
-            }
-        }
-        return null;
-    }
 }

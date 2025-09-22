@@ -124,31 +124,39 @@ public class VomApiService : IVomApiService
             return _cachedToken;
         }
 
-        // Use hardcoded session endpoint for authentication
-        var sessionEndpoint = "http://api-uat.garage.sa/api/login/signin/2890/POS-KARAGE";
+        // Use VOM's login API to get authentication token
+        var loginRequest = new
+        {
+            email = "Odai.alhasan88@gmail.com",
+            password = "Aa1m7A5dMD5"
+        };
 
-        var request = new HttpRequestMessage(HttpMethod.Get, sessionEndpoint);
+        var jsonContent = JsonSerializer.Serialize(loginRequest);
+        var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/api/companyuser/login");
+        request.Content = content;
+        AddCommonHeaders(request);
 
         var response = await _httpClient.SendAsync(request);
         if (response.IsSuccessStatusCode)
         {
             var responseContent = await response.Content.ReadAsStringAsync();
-            _logger.LogInformation("Session API response: {Response}", responseContent);
+            _logger.LogInformation("VOM login API response: {Response}", responseContent);
 
-            var sessionResponse = JsonSerializer.Deserialize<SessionResponse>(responseContent);
+            var loginResponse = JsonSerializer.Deserialize<VomLoginResponse>(responseContent);
 
-            if (sessionResponse?.Status == 1 && sessionResponse?.User?.LoginSessions?.Count > 0)
+            if (loginResponse?.success == true && !string.IsNullOrEmpty(loginResponse?.data?.token))
             {
-                var firstSession = sessionResponse.User.LoginSessions[0];
-                _cachedToken = firstSession.Session;
-                // Set token to expire in 1 hour (adjust based on actual token expiry)
-                _tokenExpiry = DateTime.UtcNow.AddHours(1);
-                _logger.LogInformation("Successfully obtained session token: {TokenStart}...", _cachedToken?.Substring(0, Math.Min(10, _cachedToken.Length)));
+                _cachedToken = loginResponse.data.token;
+                // Set token to expire in 23 hours (VOM tokens typically last 24 hours)
+                _tokenExpiry = DateTime.UtcNow.AddHours(23);
+                _logger.LogInformation("Successfully obtained VOM token: {TokenStart}...", _cachedToken?.Substring(0, Math.Min(10, _cachedToken.Length)));
                 return _cachedToken;
             }
         }
 
-        _logger.LogError("Failed to authenticate with session API. Status: {StatusCode}", response.StatusCode);
+        _logger.LogError("Failed to authenticate with VOM API. Status: {StatusCode}", response.StatusCode);
         _cachedToken = null;
         _tokenExpiry = DateTime.MinValue;
         return null;
@@ -410,6 +418,37 @@ public class VomApiService : IVomApiService
     private class Data
     {
         public string? token { get; set; }
+    }
+
+    private class VomLoginResponse
+    {
+        public int status { get; set; }
+        public VomLoginData? data { get; set; }
+        public bool success { get; set; }
+        public object? errors { get; set; }
+    }
+
+    private class VomLoginData
+    {
+        public string? token { get; set; }
+        public VomUser? user { get; set; }
+        public VomCompanyInfo? companyInfo { get; set; }
+    }
+
+    private class VomUser
+    {
+        public int id { get; set; }
+        public string? uname { get; set; }
+        public string? email { get; set; }
+        public string? country_code { get; set; }
+        public string? mobile { get; set; }
+    }
+
+    private class VomCompanyInfo
+    {
+        public int id { get; set; }
+        public string? name { get; set; }
+        public string? fqdn { get; set; }
     }
 
     private class SessionResponse
