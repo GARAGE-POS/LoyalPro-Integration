@@ -15,11 +15,11 @@ public class SubUser
 
     public string? UserType { get; set; }
 
-    public int SuperUserID { get; set; }
+    // public int SuperUserID { get; set; }
 
     public int StatusID { get; set; }
 
     // Navigation property
-    [ForeignKey("SuperUserID")]
-    public User? SuperUser { get; set; }
+    // [ForeignKey("SuperUserID")]
+    // public User? SuperUser { get; set; }
 }

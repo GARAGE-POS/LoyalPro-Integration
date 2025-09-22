@@ -117,7 +117,7 @@ public class SessionAuthService : ISessionAuthService
 
             return new SessionData
             {
-                UserID = subUser.SuperUserID,
+                UserID = subUser.SubUserID, // Using SubUserID since SuperUserID column doesn't exist
                 LocationID = sessionInfo.LocationID,
                 Session = sessionInfo.SessionId,
                 LocationName = location.Name,
