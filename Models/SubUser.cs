@@ -9,6 +9,8 @@ public class SubUser
     [Key]
     public int SubUserID { get; set; }
 
+    public int UserID { get; set; }
+
     public string? FirstName { get; set; }
 
     public string? LastName { get; set; }
