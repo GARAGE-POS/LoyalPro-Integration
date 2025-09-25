@@ -417,14 +417,14 @@ public class VomApiService : IVomApiService
         return default;
     }
 
-    public async Task<List<VomProduct>?> GetAllProductsAsync()
+    public Task<List<VomProduct>?> GetAllProductsAsync()
     {
         // Based on testing, the VOM /api/products/products endpoint returns metadata (categories, warehouses, etc.)
         // but does not include an actual products array. The VOM API appears to require searching for products
         // individually by name rather than providing a bulk list endpoint.
 
         _logger.LogInformation("VOM API does not provide a bulk product list endpoint. Products must be searched individually during sync.");
-        return new List<VomProduct>();
+        return Task.FromResult<List<VomProduct>?>(new List<VomProduct>());
     }
 
     public async Task<VomProduct?> SearchProductByNameAsync(string productName)

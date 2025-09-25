@@ -707,7 +707,7 @@ public class VomFunctions
             // Step 2: Get products from local database with proper category filtering by location
             var localProducts = await _context.Items
                 .Include(i => i.SubCategory)
-                    .ThenInclude(sc => sc.Category)
+                    .ThenInclude(sc => sc!.Category)
                 .Where(i => i.StatusID == 1 &&
                            i.SubCategory != null &&
                            i.SubCategory.Category != null &&
@@ -720,8 +720,8 @@ public class VomFunctions
                     i.Price,
                     i.Barcode,
                     i.UnitID,
-                    CategoryID = i.SubCategory.CategoryID,
-                    CategoryName = i.SubCategory.Category.Name
+                    CategoryID = i.SubCategory!.CategoryID,
+                    CategoryName = i.SubCategory!.Category!.Name
                 })
                 .ToListAsync();
 
