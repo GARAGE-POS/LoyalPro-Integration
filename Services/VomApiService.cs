@@ -91,12 +91,18 @@ public class VomProduct
     public string? desc { get; set; }
     public decimal? selling_price { get; set; }
     public decimal? buying_price { get; set; }
-    public string? total_quantity { get; set; }
-    public string? total_cost { get; set; }
-    public string? average_cost { get; set; }
-    public int? category_id { get; set; }
-    public int? unit_id { get; set; }
+    public object? total_quantity { get; set; }
+    public object? total_cost { get; set; }
+    public object? average_cost { get; set; }
+
+    // VOM returns these as strings, so we handle them as strings and convert when needed
+    public string? category_id { get; set; }
+    public string? unit_id { get; set; }
     public int? inventory_account_id { get; set; }
+
+    // Helper properties to get integer values
+    public int? CategoryIdAsInt => int.TryParse(category_id, out var result) ? result : null;
+    public int? UnitIdAsInt => int.TryParse(unit_id, out var result) ? result : null;
     public int? selling_account_id { get; set; }
     public int? purchasing_account_id { get; set; }
     public int? tax_id { get; set; }
