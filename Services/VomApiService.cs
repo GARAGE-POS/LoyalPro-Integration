@@ -16,6 +16,7 @@ public interface IVomApiService
     Task<List<VomSupplier>?> GetAllSuppliersAsync();
     Task<List<VomCategory>?> GetAllCategoriesAsync();
     Task<List<VomProduct>?> GetAllProductsAsync();
+    Task<VomProduct?> SearchProductByNameAsync(string productName);
 }
 
 // VOM Unit models
@@ -74,24 +75,38 @@ public class VomCategoriesResponse
     public List<VomCategory>? data { get; set; }
 }
 
-// VOM Product models
+// VOM Product models - matching actual API response format
 public class VomProduct
 {
     public int id { get; set; }
     public string? name_en { get; set; }
     public string? name_ar { get; set; }
-    public string? description { get; set; }
-    public decimal? buying_price { get; set; }
+    public string? identifier { get; set; }
+    public string? barcode { get; set; }
+    public string? image_path { get; set; }
+    public string? type { get; set; }
+    public decimal? quantity { get; set; }
+    public decimal? minimum_quantity { get; set; }
+    public int? allow_notification { get; set; }
+    public string? desc { get; set; }
     public decimal? selling_price { get; set; }
+    public decimal? buying_price { get; set; }
+    public string? total_quantity { get; set; }
+    public string? total_cost { get; set; }
+    public string? average_cost { get; set; }
     public int? category_id { get; set; }
     public int? unit_id { get; set; }
-    public string? barcode { get; set; }
-    public string? type { get; set; }
-    public int? warehouse_id { get; set; }
-    public decimal? quantity { get; set; }
-    public bool? is_active { get; set; }
+    public int? inventory_account_id { get; set; }
+    public int? selling_account_id { get; set; }
+    public int? purchasing_account_id { get; set; }
+    public int? tax_id { get; set; }
+    public object? custom_fields { get; set; }
+    public object? additional_cost { get; set; }
+    public int? additional_cost_account_id { get; set; }
     public DateTime? created_at { get; set; }
     public DateTime? updated_at { get; set; }
+    public DateTime? deleted_at { get; set; }
+    public string? image { get; set; }
 }
 
 public class VomProductsResponse
@@ -216,12 +231,14 @@ public class VomApiService : IVomApiService
             // Parse the VOM API response structure: { "status": 200, "data": {...}, "success": true }
             using var doc = JsonDocument.Parse(responseContent);
             var root = doc.RootElement;
-            
-            if (root.TryGetProperty("data", out var dataElement) && root.TryGetProperty("success", out var successElement) && successElement.GetBoolean())
+
+            if (root.TryGetProperty("success", out var successElement) && successElement.GetBoolean() &&
+                root.TryGetProperty("data", out var dataElement))
             {
                 // Handle product creation response which has nested "product" object
                 if (typeof(T) == typeof(VomProduct) && dataElement.TryGetProperty("product", out var productElement))
                 {
+                    _logger.LogInformation("Product creation successful, parsing product from response");
                     return JsonSerializer.Deserialize<T>(productElement.GetRawText());
                 }
                 // Handle regular responses
@@ -396,17 +413,104 @@ public class VomApiService : IVomApiService
 
     public async Task<List<VomProduct>?> GetAllProductsAsync()
     {
+        // Based on testing, the VOM /api/products/products endpoint returns metadata (categories, warehouses, etc.)
+        // but does not include an actual products array. The VOM API appears to require searching for products
+        // individually by name rather than providing a bulk list endpoint.
+
+        _logger.LogInformation("VOM API does not provide a bulk product list endpoint. Products must be searched individually during sync.");
+        return new List<VomProduct>();
+    }
+
+    public async Task<VomProduct?> SearchProductByNameAsync(string productName)
+    {
         var token = await GetAuthToken();
         if (string.IsNullOrEmpty(token))
         {
             return default;
         }
 
-        // Note: The /api/products/products endpoint returns metadata (categories, types, warehouses)
-        // not actual products. For now, we'll return an empty list to allow product creation.
-        // TODO: Find the correct endpoint for listing existing products
-        _logger.LogInformation("VOM products list endpoint not available. Starting with empty list to allow product creation.");
-        return new List<VomProduct>();
+        // Try different search approaches
+        string[] searchEndpoints = {
+            $"/api/products/search?name={Uri.EscapeDataString(productName)}",
+            $"/api/products?search={Uri.EscapeDataString(productName)}",
+            $"/api/products?name={Uri.EscapeDataString(productName)}",
+            $"/api/inventory/products?search={Uri.EscapeDataString(productName)}"
+        };
+
+        foreach (var endpoint in searchEndpoints)
+        {
+            try
+            {
+                _logger.LogInformation("Searching for product '{ProductName}' using endpoint: {Endpoint}", productName, endpoint);
+
+                var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}{endpoint}");
+                AddCommonHeaders(request);
+                request.Headers.Add("Authorization", $"Bearer {token}");
+
+                var response = await _httpClient.SendAsync(request);
+                var responseContent = await response.Content.ReadAsStringAsync();
+
+                _logger.LogInformation("Search response from {Endpoint}: Status={Status}", endpoint, response.StatusCode);
+
+                if (response.IsSuccessStatusCode && !string.IsNullOrEmpty(responseContent))
+                {
+                    using var doc = JsonDocument.Parse(responseContent);
+                    var root = doc.RootElement;
+
+                    // Try to parse different response structures
+                    if (root.TryGetProperty("data", out var dataElement))
+                    {
+                        // Check for products array
+                        if (dataElement.TryGetProperty("products", out var productsElement) && productsElement.ValueKind == JsonValueKind.Array)
+                        {
+                            var products = JsonSerializer.Deserialize<List<VomProduct>>(productsElement.GetRawText());
+                            var matchingProduct = products?.FirstOrDefault(p =>
+                                string.Equals(p.name_en, productName, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(p.name_ar, productName, StringComparison.OrdinalIgnoreCase));
+
+                            if (matchingProduct != null)
+                            {
+                                _logger.LogInformation("Found matching product '{ProductName}' with ID: {VomProductId}", productName, matchingProduct.id);
+                                return matchingProduct;
+                            }
+                        }
+                        else if (dataElement.ValueKind == JsonValueKind.Array)
+                        {
+                            var products = JsonSerializer.Deserialize<List<VomProduct>>(dataElement.GetRawText());
+                            var matchingProduct = products?.FirstOrDefault(p =>
+                                string.Equals(p.name_en, productName, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(p.name_ar, productName, StringComparison.OrdinalIgnoreCase));
+
+                            if (matchingProduct != null)
+                            {
+                                _logger.LogInformation("Found matching product '{ProductName}' with ID: {VomProductId}", productName, matchingProduct.id);
+                                return matchingProduct;
+                            }
+                        }
+                        else if (dataElement.ValueKind == JsonValueKind.Object)
+                        {
+                            // Single product response
+                            var product = JsonSerializer.Deserialize<VomProduct>(dataElement.GetRawText());
+                            if (product != null && (
+                                string.Equals(product.name_en, productName, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(product.name_ar, productName, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                _logger.LogInformation("Found matching product '{ProductName}' with ID: {VomProductId}", productName, product.id);
+                                return product;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Failed to search for product '{ProductName}' at {Endpoint}: {Error}", productName, endpoint, ex.Message);
+                continue;
+            }
+        }
+
+        _logger.LogWarning("Could not find product '{ProductName}' through search", productName);
+        return null;
     }
 
     private void AddCommonHeaders(HttpRequestMessage request)

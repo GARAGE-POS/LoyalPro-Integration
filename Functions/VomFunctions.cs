@@ -638,6 +638,37 @@ public class VomFunctions
         }
     }
 
+    [Function("ClearInvalidProductMappings")]
+    public async Task<IActionResult> ClearInvalidProductMappings(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
+    {
+        _logger.LogInformation("Clear invalid product mappings endpoint called.");
+
+        try
+        {
+            var invalidMappings = await _context.ProductMappings
+                .Where(pm => pm.VomProductId == -1)
+                .ToListAsync();
+
+            if (invalidMappings.Any())
+            {
+                _context.ProductMappings.RemoveRange(invalidMappings);
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Cleared {Count} invalid product mappings", invalidMappings.Count);
+            }
+
+            return new OkObjectResult(new {
+                message = "Invalid product mappings cleared",
+                cleared_count = invalidMappings.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error clearing invalid product mappings");
+            return new StatusCodeResult(500);
+        }
+    }
+
     [Function("SyncProductsToVom")]
     public async Task<IActionResult> SyncProductsToVom(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
@@ -664,9 +695,23 @@ public class VomFunctions
             _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId}",
                 userId, locationId);
 
-            // Step 1: Get products from local database (simplified approach like units/suppliers)
+            // Step 1: First, let's see what categories exist for this location
+            var categoriesForLocation = await _context.Categories
+                .Where(c => c.LocationID == locationId && c.StatusID == 1)
+                .Select(c => new { c.CategoryID, c.Name })
+                .ToListAsync();
+
+            _logger.LogInformation("Found {CategoryCount} categories for location {LocationId}: {Categories}",
+                categoriesForLocation.Count, locationId, string.Join(", ", categoriesForLocation.Select(c => $"{c.CategoryID}:{c.Name}")));
+
+            // Step 2: Get products from local database with proper category filtering by location
             var localProducts = await _context.Items
-                .Where(i => i.StatusID == 1) // Only active products
+                .Include(i => i.SubCategory)
+                    .ThenInclude(sc => sc.Category)
+                .Where(i => i.StatusID == 1 &&
+                           i.SubCategory != null &&
+                           i.SubCategory.Category != null &&
+                           i.SubCategory.Category.LocationID == locationId)
                 .Select(i => new {
                     i.ItemID,
                     i.Name,
@@ -675,12 +720,13 @@ public class VomFunctions
                     i.Price,
                     i.Barcode,
                     i.UnitID,
-                    CategoryID = i.SubCategory != null ? i.SubCategory.CategoryID : (int?)null
+                    CategoryID = i.SubCategory.CategoryID,
+                    CategoryName = i.SubCategory.Category.Name
                 })
-                .Take(10) // Limit for testing to prevent timeout
                 .ToListAsync();
 
-            _logger.LogInformation("Found {ProductCount} active products in local database", localProducts.Count);
+            _logger.LogInformation("Found {ProductCount} active products for location {LocationId}: {Products}",
+                localProducts.Count, locationId, string.Join(", ", localProducts.Select(p => $"{p.ItemID}:{p.Name}({p.CategoryName})")));
 
             if (!localProducts.Any())
             {
@@ -689,12 +735,14 @@ public class VomFunctions
                 });
             }
 
-            // Step 4: Get all products from VOM (currently returns empty list, but ready for future)
+            // Step 4: Get all products from VOM - test if we can find existing products
+            _logger.LogInformation("Attempting to retrieve existing products from VOM...");
             var vomProducts = await _vomApiService.GetAllProductsAsync();
             if (vomProducts == null)
             {
                 vomProducts = new List<VomProduct>(); // Initialize as empty if null
             }
+            _logger.LogInformation("Retrieved {ProductCount} products from VOM API", vomProducts.Count);
 
             var results = new List<object>();
             var createdCount = 0;
@@ -769,7 +817,7 @@ public class VomFunctions
 
                         // First, resolve category mapping
                         int? vomCategoryId = null;
-                        if (localProduct.CategoryID.HasValue)
+                        if (localProduct.CategoryID > 0)
                         {
                             var categoryMapping = await _context.CategoryMappings
                                 .FirstOrDefaultAsync(cm => cm.CategoryId == localProduct.CategoryID && cm.LocationId == locationId);
@@ -793,7 +841,7 @@ public class VomFunctions
 
                         // Resolve unit mapping
                         int? vomUnitId = null;
-                        if (localProduct.UnitID.HasValue)
+                        if (localProduct.UnitID.HasValue && localProduct.UnitID.Value > 0)
                         {
                             var unitMapping = await _context.UnitMappings
                                 .FirstOrDefaultAsync(um => um.UnitId == localProduct.UnitID && um.LocationId == locationId);
@@ -859,22 +907,47 @@ public class VomFunctions
                             if (rawResponse.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity &&
                                 responseContent.Contains("name has already been taken"))
                             {
-                                // Since we can't get existing products via API, we'll create a placeholder mapping
-                                // with a negative VOM ID to indicate it exists but we don't know the exact ID
-                                vomProductId = -1; // Placeholder ID to indicate product exists in VOM
-                                matchedCount++;
-
-                                _logger.LogInformation("Product {ProductName} already exists in VOM. Creating placeholder mapping.",
+                                _logger.LogInformation("Product {ProductName} already exists in VOM. Attempting to find actual product ID.",
                                     localProduct.Name);
 
-                                results.Add(new
+                                // Search for the existing product to get its actual ID
+                                var existingProduct = await _vomApiService.SearchProductByNameAsync(localProduct.Name ?? "");
+
+                                if (existingProduct != null && existingProduct.id > 0)
                                 {
-                                    local_item_id = localProduct.ItemID,
-                                    vom_product_id = vomProductId,
-                                    status = "existing_product",
-                                    action = "placeholder_mapping",
-                                    note = "Product exists in VOM but exact ID unknown - create placeholder mapping"
-                                });
+                                    vomProductId = existingProduct.id;
+                                    matchedCount++;
+
+                                    _logger.LogInformation("Found existing product {ProductName} in VOM with ID: {VomProductId}",
+                                        localProduct.Name, vomProductId);
+
+                                    results.Add(new
+                                    {
+                                        local_item_id = localProduct.ItemID,
+                                        vom_product_id = vomProductId,
+                                        status = "existing_product",
+                                        action = "found_existing",
+                                        note = "Found existing product in VOM with actual ID"
+                                    });
+                                }
+                                else
+                                {
+                                    // Fallback to placeholder if search fails
+                                    vomProductId = -1; // Placeholder ID to indicate product exists in VOM
+                                    matchedCount++;
+
+                                    _logger.LogWarning("Product {ProductName} exists in VOM but could not find actual ID. Using placeholder.",
+                                        localProduct.Name);
+
+                                    results.Add(new
+                                    {
+                                        local_item_id = localProduct.ItemID,
+                                        vom_product_id = vomProductId,
+                                        status = "existing_product",
+                                        action = "placeholder_mapping",
+                                        note = "Product exists in VOM but exact ID unknown - using placeholder"
+                                    });
+                                }
                             }
                             else
                             {
