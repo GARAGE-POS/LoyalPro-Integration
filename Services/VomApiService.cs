@@ -219,6 +219,12 @@ public class VomApiService : IVomApiService
             
             if (root.TryGetProperty("data", out var dataElement) && root.TryGetProperty("success", out var successElement) && successElement.GetBoolean())
             {
+                // Handle product creation response which has nested "product" object
+                if (typeof(T) == typeof(VomProduct) && dataElement.TryGetProperty("product", out var productElement))
+                {
+                    return JsonSerializer.Deserialize<T>(productElement.GetRawText());
+                }
+                // Handle regular responses
                 return JsonSerializer.Deserialize<T>(dataElement.GetRawText());
             }
             
@@ -396,10 +402,10 @@ public class VomApiService : IVomApiService
             return default;
         }
 
-        // Note: VOM API /api/products/products returns metadata, not actual products
-        // For now, we'll return an empty list and focus on creating products
-        // This method may need to be updated once we find the correct products listing endpoint
-        _logger.LogWarning("VOM products listing endpoint not yet discovered. Returning empty list for matching purposes.");
+        // Note: The /api/products/products endpoint returns metadata (categories, types, warehouses)
+        // not actual products. For now, we'll return an empty list to allow product creation.
+        // TODO: Find the correct endpoint for listing existing products
+        _logger.LogInformation("VOM products list endpoint not available. Starting with empty list to allow product creation.");
         return new List<VomProduct>();
     }
 

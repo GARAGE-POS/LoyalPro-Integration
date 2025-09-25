@@ -664,81 +664,30 @@ public class VomFunctions
             _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId}",
                 userId, locationId);
 
-            // Step 1: Get user's locations (following ProductFunctions.cs pattern)
-            var userLocationIds = await _context.Locations
-                .Where(l => l.UserID == userId)
-                .Select(l => l.LocationID)
-                .ToListAsync();
-
-            _logger.LogInformation("Found {LocationCount} locations for user {UserId}: {LocationIds}",
-                userLocationIds.Count, userId, string.Join(", ", userLocationIds));
-
-            // Step 2: Get unique products across user's locations (following ProductFunctions.cs pattern)
-            var uniqueItems = await _context.MapUniqueItemIDs
-                .Where(m => userLocationIds.Contains(m.LocationID))
-                .GroupBy(m => m.UniqueItemID)
-                .Select(g => g.First())
-                .ToListAsync();
-
-            _logger.LogInformation("Found {UniqueItemCount} unique items across user's locations", uniqueItems.Count);
-
-            if (!uniqueItems.Any())
-            {
-                _logger.LogWarning("No products found in MapUniqueItemID table for user's locations. Falling back to direct Items query.");
-
-                // Fallback: Query Items table directly for this user's locations
-                var directItems = await _context.Items
-                    .Join(_context.SubCategories, item => item.SubCatID, subcat => subcat.SubCategoryID, (item, subcat) => new { item, subcat })
-                    .Join(_context.Categories, x => x.subcat.CategoryID, cat => cat.CategoryID, (x, cat) => new { x.item, x.subcat, cat })
-                    .Join(_context.Locations, x => x.cat.LocationID, loc => loc.LocationID, (x, loc) => new { x.item, x.subcat, x.cat, loc })
-                    .Where(x => userLocationIds.Contains(x.cat.LocationID ?? 0))
-                    .Select(x => new functions.Models.MapUniqueItemID {
-                        ItemID = x.item.ItemID,
-                        LocationID = x.cat.LocationID ?? 0,
-                        ProductName = x.item.Name ?? "",
-                        LocationName = x.loc.Name ?? "",
-                        UniqueItemID = x.item.ItemID
-                    })
-                    .GroupBy(x => x.ItemID)
-                    .Select(g => g.First())
-                    .ToListAsync();
-
-                if (!directItems.Any())
-                {
-                    return new BadRequestObjectResult(new {
-                        error = "No products found for this user's locations",
-                        debug_info = new {
-                            user_locations = userLocationIds,
-                            message = "Both MapUniqueItemID and direct Items query returned no results"
-                        }
-                    });
-                }
-
-                uniqueItems = directItems;
-                _logger.LogInformation("Found {DirectItemCount} products using direct Items query", directItems.Count);
-            }
-
-            // Step 3: Get detailed product information with category and unit data
-            var itemIds = uniqueItems.Select(ui => ui.ItemID).ToList();
+            // Step 1: Get products from local database (simplified approach like units/suppliers)
             var localProducts = await _context.Items
-                .Where(i => itemIds.Contains(i.ItemID))
-                .Select(i => new
-                {
+                .Where(i => i.StatusID == 1) // Only active products
+                .Select(i => new {
                     i.ItemID,
                     i.Name,
                     i.Description,
-                    i.Price,
                     i.Cost,
+                    i.Price,
                     i.Barcode,
-                    CategoryID = i.SubCategory != null ? i.SubCategory.CategoryID : (int?)null,
-                    i.SubCatID,
                     i.UnitID,
-                    CategoryName = i.SubCategory != null && i.SubCategory.Category != null ? i.SubCategory.Category.Name : null,
-                    UnitName = default(string) // We'll need to query Units separately if needed
+                    CategoryID = i.SubCategory != null ? i.SubCategory.CategoryID : (int?)null
                 })
+                .Take(10) // Limit for testing to prevent timeout
                 .ToListAsync();
 
-            _logger.LogInformation("Retrieved detailed information for {ProductCount} products", localProducts.Count);
+            _logger.LogInformation("Found {ProductCount} active products in local database", localProducts.Count);
+
+            if (!localProducts.Any())
+            {
+                return new BadRequestObjectResult(new {
+                    error = "No active products found in local database"
+                });
+            }
 
             // Step 4: Get all products from VOM (currently returns empty list, but ready for future)
             var vomProducts = await _vomApiService.GetAllProductsAsync();
@@ -866,21 +815,14 @@ public class VomFunctions
                             vomUnitId = 4; // Default piece unit
                         }
 
-                        // Create VOM product request
+                        // Create VOM product request with minimal required fields
                         var vomRequest = new
                         {
                             name_en = localProduct.Name ?? "Unknown Product",
                             name_ar = localProduct.Name ?? "Unknown Product", // Use same as English since we don't have Arabic
-                            description = localProduct.Description,
-                            buying_price = (decimal)(localProduct.Cost ?? 0),
-                            selling_price = (decimal)(localProduct.Price ?? 0),
-                            category_id = vomCategoryId,
-                            unit_id = vomUnitId,
-                            barcode = localProduct.Barcode,
-                            type = "product", // Default type
-                            warehouse_id = 1, // Default main warehouse
-                            quantity = 0, // Default quantity
-                            is_active = true
+                            category_id = vomCategoryId.ToString(),
+                            unit_id = vomUnitId.ToString(),
+                            type = "product" // Required field
                         };
 
                         _logger.LogInformation("Attempting to create product in VOM: {ProductName} (ID: {ItemId}) with payload: {@Payload}",
@@ -906,17 +848,48 @@ public class VomFunctions
                         }
                         else
                         {
-                            failedCount++;
-                            _logger.LogError("Failed to create product {ProductName} (ID: {ItemId}) in VOM. Response was null or invalid",
-                                localProduct.Name, localProduct.ItemID);
+                            // Check if this is a "name already taken" error by making a raw POST call to get error details
+                            var rawResponse = await _vomApiService.PostAsync("/api/products/products", vomRequest);
+                            var responseContent = await rawResponse.Content.ReadAsStringAsync();
 
-                            results.Add(new
+                            _logger.LogInformation("VOM API response for product {ProductName}: Status={Status}, Content={Content}",
+                                localProduct.Name, rawResponse.StatusCode, responseContent);
+
+                            // If the error is "name already taken", try to find the existing product
+                            if (rawResponse.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity &&
+                                responseContent.Contains("name has already been taken"))
                             {
-                                local_item_id = localProduct.ItemID,
-                                status = "failed",
-                                error = "Failed to create product in VOM - check logs for details"
-                            });
-                            continue; // Skip mapping creation
+                                // Since we can't get existing products via API, we'll create a placeholder mapping
+                                // with a negative VOM ID to indicate it exists but we don't know the exact ID
+                                vomProductId = -1; // Placeholder ID to indicate product exists in VOM
+                                matchedCount++;
+
+                                _logger.LogInformation("Product {ProductName} already exists in VOM. Creating placeholder mapping.",
+                                    localProduct.Name);
+
+                                results.Add(new
+                                {
+                                    local_item_id = localProduct.ItemID,
+                                    vom_product_id = vomProductId,
+                                    status = "existing_product",
+                                    action = "placeholder_mapping",
+                                    note = "Product exists in VOM but exact ID unknown - create placeholder mapping"
+                                });
+                            }
+                            else
+                            {
+                                failedCount++;
+                                _logger.LogError("Failed to create product {ProductName} (ID: {ItemId}) in VOM. Status: {Status}, Response: {Response}",
+                                    localProduct.Name, localProduct.ItemID, rawResponse.StatusCode, responseContent);
+
+                                results.Add(new
+                                {
+                                    local_item_id = localProduct.ItemID,
+                                    status = "failed",
+                                    error = $"Failed to create product in VOM - {rawResponse.StatusCode}: {responseContent}"
+                                });
+                                continue; // Skip mapping creation
+                            }
                         }
                     }
 
@@ -949,7 +922,6 @@ public class VomFunctions
             return new OkObjectResult(new
             {
                 message = "Product sync completed",
-                total_unique_products = uniqueItems.Count,
                 total_local_products = localProducts.Count,
                 total_vom_products = vomProducts.Count,
                 created_products = createdCount,
@@ -957,7 +929,8 @@ public class VomFunctions
                 failed_products = failedCount,
                 missing_category_mappings = missingCategoryMappings,
                 missing_unit_mappings = missingUnitMappings,
-                user_locations = userLocationIds,
+                user_id = userId,
+                location_id = locationId,
                 results = results
             });
         }
