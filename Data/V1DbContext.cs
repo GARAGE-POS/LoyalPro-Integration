@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Karage.Functions.Models;
+using Functions.Models;
 
 namespace Karage.Functions.Data;
 
@@ -35,6 +36,8 @@ public class V1DbContext : DbContext
     public DbSet<Bill> Bills { get; set; }
     public DbSet<BillDetail> BillDetails { get; set; }
     public DbSet<BillMapping> BillMappings { get; set; }
+    public DbSet<Reconciliation> Reconciliations { get; set; }
+    public DbSet<ReconciliationDetail> ReconciliationDetails { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

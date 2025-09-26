@@ -19,6 +19,7 @@ public interface IVomApiService
     Task<VomProduct?> SearchProductByNameAsync(string productName);
     Task<List<VomBill>?> GetAllPurchaseBillsAsync();
     Task<VomBill?> CreatePurchaseBillAsync(object billData);
+    Task<VomBill?> UpdatePurchaseBillAsync(int billId, object billData);
 }
 
 // VOM Unit models
@@ -659,6 +660,57 @@ public class VomApiService : IVomApiService
         }
 
         _logger.LogError("POST request to create purchase bill failed. Status: {StatusCode}, Response: {Response}", response.StatusCode, responseContent);
+        return default;
+    }
+
+    public async Task<VomBill?> UpdatePurchaseBillAsync(int billId, object billData)
+    {
+        var token = await GetAuthToken();
+        if (string.IsNullOrEmpty(token))
+        {
+            _logger.LogError("Cannot update purchase bill - no valid token");
+            return default;
+        }
+
+        var jsonContent = JsonSerializer.Serialize(billData);
+        var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+        _logger.LogInformation("Updating purchase bill {BillId} with data: {Data}", billId, jsonContent);
+
+        var request = new HttpRequestMessage(HttpMethod.Put, $"{BaseUrl}/api/purchases/purchase-bills/{billId}");
+        request.Content = content;
+        AddCommonHeaders(request);
+        request.Headers.Add("Authorization", $"Bearer {token}");
+
+        var response = await _httpClient.SendAsync(request);
+        var responseContent = await response.Content.ReadAsStringAsync();
+
+        if (response.IsSuccessStatusCode)
+        {
+            _logger.LogInformation("PUT request to update purchase bill succeeded. Response: {Response}", responseContent);
+
+            // Parse the VOM API response structure: { "status": 200, "data": {...}, "success": true }
+            using var doc = JsonDocument.Parse(responseContent);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("success", out var successElement) && successElement.GetBoolean() &&
+                root.TryGetProperty("data", out var dataElement))
+            {
+                // Handle purchase bill update response which may have nested "purchase_bill" object
+                if (dataElement.TryGetProperty("purchase_bill", out var billElement))
+                {
+                    _logger.LogInformation("Purchase bill update successful, parsing bill from response");
+                    return JsonSerializer.Deserialize<VomBill>(billElement.GetRawText());
+                }
+                // Handle regular responses
+                return JsonSerializer.Deserialize<VomBill>(dataElement.GetRawText());
+            }
+
+            _logger.LogWarning("VOM API response format unexpected or success=false: {Response}", responseContent);
+            return default;
+        }
+
+        _logger.LogError("PUT request to update purchase bill failed. Status: {StatusCode}, Response: {Response}", response.StatusCode, responseContent);
         return default;
     }
 

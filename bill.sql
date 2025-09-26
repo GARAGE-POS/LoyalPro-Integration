@@ -66,3 +66,57 @@ CREATE TABLE Garage_UAT.dbo.inv_BillDetail (
 
 ALTER TABLE Garage_UAT.dbo.inv_BillDetail ADD CONSTRAINT FK_BillDetail_Bill FOREIGN KEY (BillID) REFERENCES Garage_UAT.dbo.inv_Bill(BillID);
 ALTER TABLE Garage_UAT.dbo.inv_BillDetail ADD CONSTRAINT FK_BillDetail_Items FOREIGN KEY (ItemID) REFERENCES Garage_UAT.dbo.Items(ItemID);
+
+
+-- Garage_UAT.dbo.inv_Reconciliation definition
+
+-- Drop table
+
+-- DROP TABLE Garage_UAT.dbo.inv_Reconciliation;
+
+CREATE TABLE Garage_UAT.dbo.inv_Reconciliation (
+	ReconciliationID int IDENTITY(1,1) NOT NULL,
+	PurchaseOrderID int NULL,
+	Code nvarchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+	[Date] datetime NULL,
+	Reason nvarchar(250) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+	LastUpdatedDate datetime NULL,
+	LastUpdatedBy nvarchar(100) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+	StatusID int NULL,
+	LocationID int NOT NULL,
+	StoreID int NULL,
+	UserID int NULL,
+	CONSTRAINT PK_Reconciliation PRIMARY KEY (ReconciliationID)
+);
+
+
+-- Garage_UAT.dbo.inv_Reconciliation foreign keys
+
+ALTER TABLE Garage_UAT.dbo.inv_Reconciliation ADD CONSTRAINT FK_Reconciliation_Locations FOREIGN KEY (LocationID) REFERENCES Garage_UAT.dbo.Locations(LocationID);
+ALTER TABLE Garage_UAT.dbo.inv_Reconciliation ADD CONSTRAINT FK_inv_Reconciliation_Stores FOREIGN KEY (StoreID) REFERENCES Garage_UAT.dbo.Stores(StoreID);
+
+
+-- Garage_UAT.dbo.inv_ReconciliationDetail definition
+
+-- Drop table
+
+-- DROP TABLE Garage_UAT.dbo.inv_ReconciliationDetail;
+
+CREATE TABLE Garage_UAT.dbo.inv_ReconciliationDetail (
+	ReconciliationDetailID int IDENTITY(1,1) NOT NULL,
+	ReconciliationID int NULL,
+	ItemID int NOT NULL,
+	Cost float NULL,
+	Price float NULL,
+	Quantity int NULL,
+	Total float NULL,
+	StatusID int NULL,
+	Reason nvarchar(500) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+	CONSTRAINT PK_ReconciliationDetail PRIMARY KEY (ReconciliationDetailID)
+);
+
+
+-- Garage_UAT.dbo.inv_ReconciliationDetail foreign keys
+
+ALTER TABLE Garage_UAT.dbo.inv_ReconciliationDetail ADD CONSTRAINT FK_ReconciliationDetail_Items FOREIGN KEY (ItemID) REFERENCES Garage_UAT.dbo.Items(ItemID);
+ALTER TABLE Garage_UAT.dbo.inv_ReconciliationDetail ADD CONSTRAINT FK_ReconciliationDetail_Reconciliation FOREIGN KEY (ReconciliationID) REFERENCES Garage_UAT.dbo.inv_Reconciliation(ReconciliationID);

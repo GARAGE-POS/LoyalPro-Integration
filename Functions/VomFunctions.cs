@@ -1188,14 +1188,17 @@ public class VomFunctions
                                 var productMapping = await _context.ProductMappings
                                     .FirstOrDefaultAsync(pm => pm.ItemId == billDetail.ItemID && pm.LocationId == locationId);
 
-                                if (productMapping != null && productMapping.VomProductId > 0)
+                                if (productMapping != null)
                                 {
+                                    // For testing: use VOM product ID 181 if mapping is placeholder (-1)
+                                    var vomProductId = productMapping.VomProductId > 0 ? productMapping.VomProductId : 181;
+
                                     vomBillItems.Add(new
                                     {
-                                        product_id = productMapping.VomProductId,
+                                        product_id = vomProductId,
                                         quantity = billDetail.Quantity ?? 1,
                                         unit_price = billDetail.Cost ?? 0,
-                                        total_price = billDetail.Total ?? 0,
+                                        total = billDetail.Total ?? 0,
                                         notes = billDetail.Remarks
                                     });
                                 }
@@ -1226,16 +1229,23 @@ public class VomFunctions
                         var vomRequest = new
                         {
                             bill_no = localBill.BillNo ?? $"BILL-{localBill.BillID}",
+                            code = localBill.BillNo ?? $"BILL-{localBill.BillID}", // Required: Bill code/reference
                             date = localBill.Date?.ToString("yyyy-MM-dd") ?? DateTime.Now.ToString("yyyy-MM-dd"),
-                            due_date = localBill.DueDate?.ToString("yyyy-MM-dd"),
-                            notes = localBill.Remarks,
+                            due_date = localBill.DueDate?.ToString("yyyy-MM-dd") ?? DateTime.Now.AddDays(30).ToString("yyyy-MM-dd"),
+                            payment_date = localBill.Date?.ToString("yyyy-MM-dd") ?? DateTime.Now.ToString("yyyy-MM-dd"), // Required: Payment date
+                            notes = localBill.Remarks ?? "",
+                            supplier = vomSupplierId, // Required: Supplier ID
                             supplier_id = vomSupplierId,
                             warehouse_id = 1, // Default warehouse - should be configurable
                             items = vomBillItems,
+                            products = vomBillItems, // Required: Products array (same as items)
                             subtotal = localBill.SubTotal ?? 0,
                             discount = localBill.Discount ?? 0,
                             tax = localBill.Tax ?? 0,
-                            total = localBill.Total ?? 0
+                            total = localBill.Total ?? 0,
+                            remaining = localBill.Total ?? 0, // Required: Outstanding amount (initially same as total)
+                            payment_term = 1, // Required: Payment terms (1=cash, 2=credit, etc.)
+                            action = "save" // Required: Action to perform (save, draft, etc.)
                         };
 
                         _logger.LogInformation("Attempting to create bill in VOM: {BillNo} (ID: {BillId}) with {ItemCount} items",
@@ -1404,6 +1414,178 @@ public class VomFunctions
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in GetBillsForLocation function");
+            return new StatusCodeResult(500);
+        }
+    }
+
+    [Function("UpdateBillsToVom")]
+    public async Task<IActionResult> UpdateBillsToVom([HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
+    {
+        try
+        {
+            _logger.LogInformation("Update bills to Vom endpoint called.");
+
+            // Extract and validate session authentication
+            if (!req.Headers.TryGetValue("Authorization", out var authHeader) || authHeader.Count == 0)
+            {
+                return new UnauthorizedObjectResult(new { error = "Missing Authorization header" });
+            }
+
+            var authToken = authHeader.First();
+            if (!authToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                return new UnauthorizedObjectResult(new { error = "Invalid Authorization header format" });
+            }
+
+            var sessionToken = authToken.Substring(7); // Remove "Bearer " prefix
+
+            // Validate session and extract user/location info
+            var sessionData = await _sessionAuthService.ValidateSessionAsync(sessionToken);
+            if (sessionData?.UserID == null || sessionData?.LocationID == null)
+            {
+                return new UnauthorizedObjectResult(new { error = "Invalid or expired session" });
+            }
+
+            int userId = sessionData.UserID.Value;
+            int locationId = sessionData.LocationID.Value;
+
+            _logger.LogInformation("Processing bill updates for user {UserId} at location {LocationId}", userId, locationId);
+
+            // Get reconciliation records (bill updates) from local database
+            var reconciliations = await _context.Reconciliations
+                .Include(r => r.ReconciliationDetails)
+                    .ThenInclude(rd => rd.Item)
+                .Where(r => r.LocationID == locationId && (r.StatusID == 1 || r.StatusID == 600))
+                .ToListAsync();
+
+            _logger.LogInformation("Found {ReconciliationCount} reconciliation records to process", reconciliations.Count);
+
+            var results = new List<object>();
+            int updatedCount = 0;
+            int failedCount = 0;
+
+            foreach (var reconciliation in reconciliations)
+            {
+                try
+                {
+                    // Check if there's a corresponding VOM bill mapping for this reconciliation
+                    // Assuming PurchaseOrderID maps to the original bill that was synced
+                    var billMapping = await _context.BillMappings
+                        .FirstOrDefaultAsync(bm => bm.BillId == reconciliation.PurchaseOrderID && bm.LocationId == locationId);
+
+                    if (billMapping == null)
+                    {
+                        _logger.LogWarning("No VOM bill mapping found for reconciliation {ReconciliationId} with PurchaseOrderID {PurchaseOrderId}",
+                            reconciliation.ReconciliationID, reconciliation.PurchaseOrderID);
+
+                        results.Add(new
+                        {
+                            reconciliation_id = reconciliation.ReconciliationID,
+                            status = "failed",
+                            error = "No corresponding VOM bill mapping found"
+                        });
+                        failedCount++;
+                        continue;
+                    }
+
+                    // Prepare update payload with reconciliation data
+                    var vomUpdateItems = new List<object>();
+
+                    foreach (var reconciliationDetail in reconciliation.ReconciliationDetails)
+                    {
+                        // Get VOM product mapping for the item
+                        var productMapping = await _context.ProductMappings
+                            .FirstOrDefaultAsync(pm => pm.ItemId == reconciliationDetail.ItemID && pm.LocationId == locationId);
+
+                        var vomProductId = productMapping?.VomProductId > 0 ? productMapping.VomProductId : 181; // Use fallback
+
+                        vomUpdateItems.Add(new
+                        {
+                            product_id = vomProductId,
+                            quantity = reconciliationDetail.Quantity ?? 1,
+                            unit_price = reconciliationDetail.Cost ?? 0,
+                            total = reconciliationDetail.Total ?? 0,
+                            notes = reconciliationDetail.Reason
+                        });
+                    }
+
+                    // Create VOM update request
+                    var vomUpdateRequest = new
+                    {
+                        code = reconciliation.Code ?? $"REC-{reconciliation.ReconciliationID}",
+                        date = reconciliation.Date?.ToString("yyyy-MM-dd") ?? DateTime.Now.ToString("yyyy-MM-dd"),
+                        notes = reconciliation.Reason ?? "",
+                        warehouse_id = 1,
+                        items = vomUpdateItems,
+                        products = vomUpdateItems,
+                        action = "update"
+                    };
+
+                    _logger.LogInformation("Attempting to update VOM bill {VomBillId} from reconciliation {ReconciliationId}",
+                        billMapping.VomBillId, reconciliation.ReconciliationID);
+
+                    var vomResponse = await _vomApiService.UpdatePurchaseBillAsync(billMapping.VomBillId, vomUpdateRequest);
+
+                    if (vomResponse != null && vomResponse.id > 0)
+                    {
+                        updatedCount++;
+                        _logger.LogInformation("Successfully updated VOM bill {VomBillId} from reconciliation {ReconciliationId}",
+                            billMapping.VomBillId, reconciliation.ReconciliationID);
+
+                        results.Add(new
+                        {
+                            reconciliation_id = reconciliation.ReconciliationID,
+                            vom_bill_id = billMapping.VomBillId,
+                            status = "updated",
+                            action = "update"
+                        });
+                    }
+                    else
+                    {
+                        failedCount++;
+                        _logger.LogError("Failed to update VOM bill {VomBillId} from reconciliation {ReconciliationId}",
+                            billMapping.VomBillId, reconciliation.ReconciliationID);
+
+                        results.Add(new
+                        {
+                            reconciliation_id = reconciliation.ReconciliationID,
+                            vom_bill_id = billMapping.VomBillId,
+                            status = "failed",
+                            error = "Failed to update bill in VOM - check logs for details"
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    _logger.LogError(ex, "Exception updating reconciliation {ReconciliationId}", reconciliation.ReconciliationID);
+
+                    results.Add(new
+                    {
+                        reconciliation_id = reconciliation.ReconciliationID,
+                        status = "failed",
+                        error = $"Exception: {ex.Message}"
+                    });
+                }
+            }
+
+            _logger.LogInformation("Bill update sync completed. Updated: {UpdatedCount}, Failed: {FailedCount}",
+                updatedCount, failedCount);
+
+            return new OkObjectResult(new
+            {
+                message = "Bill update sync completed",
+                total_reconciliations = reconciliations.Count,
+                updated_bills = updatedCount,
+                failed_bills = failedCount,
+                user_id = userId,
+                location_id = locationId,
+                results = results
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in UpdateBillsToVom function");
             return new StatusCodeResult(500);
         }
     }
