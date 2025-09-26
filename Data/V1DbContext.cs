@@ -32,6 +32,9 @@ public class V1DbContext : DbContext
     public DbSet<Discount> Discounts { get; set; }
     public DbSet<SessionInfo> SessionInfos { get; set; }
     public DbSet<SubUser> SubUsers { get; set; }
+    public DbSet<Bill> Bills { get; set; }
+    public DbSet<BillDetail> BillDetails { get; set; }
+    public DbSet<BillMapping> BillMappings { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -227,6 +230,68 @@ public class V1DbContext : DbContext
 
         modelBuilder.Entity<Discount>()
             .Property(d => d.Value)
+            .HasColumnType("float");
+
+        // Configure Bill relationships
+        modelBuilder.Entity<Bill>()
+            .HasOne(b => b.Location)
+            .WithMany()
+            .HasForeignKey(b => b.LocationID)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Bill>()
+            .HasOne(b => b.Supplier)
+            .WithMany()
+            .HasForeignKey(b => b.SupplierID)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Configure BillDetail relationships
+        modelBuilder.Entity<BillDetail>()
+            .HasOne(bd => bd.Bill)
+            .WithMany(b => b.BillDetails)
+            .HasForeignKey(bd => bd.BillID)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<BillDetail>()
+            .HasOne(bd => bd.Item)
+            .WithMany()
+            .HasForeignKey(bd => bd.ItemID)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Configure BillMapping relationships
+        modelBuilder.Entity<BillMapping>()
+            .HasOne(bm => bm.Bill)
+            .WithMany()
+            .HasForeignKey(bm => bm.BillId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Configure float properties for Bill entities
+        modelBuilder.Entity<Bill>()
+            .Property(b => b.SubTotal)
+            .HasColumnType("float");
+
+        modelBuilder.Entity<Bill>()
+            .Property(b => b.Discount)
+            .HasColumnType("float");
+
+        modelBuilder.Entity<Bill>()
+            .Property(b => b.Tax)
+            .HasColumnType("float");
+
+        modelBuilder.Entity<Bill>()
+            .Property(b => b.Total)
+            .HasColumnType("float");
+
+        modelBuilder.Entity<BillDetail>()
+            .Property(bd => bd.Cost)
+            .HasColumnType("float");
+
+        modelBuilder.Entity<BillDetail>()
+            .Property(bd => bd.Price)
+            .HasColumnType("float");
+
+        modelBuilder.Entity<BillDetail>()
+            .Property(bd => bd.Total)
             .HasColumnType("float");
     }
 }

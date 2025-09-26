@@ -204,7 +204,7 @@ public class VomFunctions
                 total_vom_units = vomUnits.Count,
                 created_units = createdCount,
                 matched_units = matchedCount,
-                results = results
+                results
             });
         }
         catch (Exception ex)
@@ -403,7 +403,7 @@ public class VomFunctions
                 total_vom_suppliers = vomSuppliers.Count,
                 created_suppliers = createdCount,
                 matched_suppliers = matchedCount,
-                results = results
+                results
             });
         }
         catch (Exception ex)
@@ -628,7 +628,7 @@ public class VomFunctions
                 total_vom_categories = vomCategories.Count,
                 created_categories = createdCount,
                 matched_categories = matchedCount,
-                results = results
+                results
             });
         }
         catch (Exception ex)
@@ -1004,12 +1004,406 @@ public class VomFunctions
                 missing_unit_mappings = missingUnitMappings,
                 user_id = userId,
                 location_id = locationId,
-                results = results
+                results
             });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in SyncProductsToVom function");
+            return new StatusCodeResult(500);
+        }
+    }
+
+    [Function("SyncBillsToVom")]
+    public async Task<IActionResult> SyncBillsToVom(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
+    {
+        _logger.LogInformation("Sync bills to Vom endpoint called.");
+
+        try
+        {
+            // Verify session and get session data
+            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
+            if (authResult != null)
+            {
+                return authResult; // Return unauthorized result
+            }
+
+            if (sessionData == null)
+            {
+                return new BadRequestObjectResult(new { error = "Failed to retrieve session data" });
+            }
+
+            var locationId = sessionData.LocationID;
+            var userId = sessionData.UserID;
+
+            _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId}",
+                userId, locationId);
+
+            // Step 1: Get all purchase bills from VOM (for matching existing bills)
+            var vomBills = await _vomApiService.GetAllPurchaseBillsAsync() ?? [];
+            _logger.LogInformation("Retrieved {BillCount} bills from VOM API", vomBills.Count);
+
+            // Step 2: Get all local bills with active status for this location
+            var localBills = await _context.Bills
+                .Include(b => b.BillDetails)
+                    .ThenInclude(bd => bd.Item)
+                .Include(b => b.Supplier)
+                .Where(b => (b.StatusID == 1 || b.StatusID == 600) && b.LocationID == locationId) // Active bills and StatusID 600 for this location
+                .Select(b => new
+                {
+                    b.BillID,
+                    b.BillNo,
+                    b.Date,
+                    b.DueDate,
+                    b.Remarks,
+                    b.SubTotal,
+                    b.Discount,
+                    b.Tax,
+                    b.Total,
+                    b.SupplierID,
+                    SupplierName = b.Supplier != null ? b.Supplier.Name : null,
+                    BillDetails = b.BillDetails.Where(bd => bd.StatusID == 1 || bd.StatusID == 600).Select(bd => new
+                    {
+                        bd.ItemID,
+                        ItemName = bd.Item != null ? bd.Item.Name : null,
+                        bd.Quantity,
+                        bd.Cost,
+                        bd.Price,
+                        bd.Total,
+                        bd.Remarks
+                    }).ToList()
+                })
+                .ToListAsync();
+
+            if (localBills.Count == 0)
+            {
+                return new BadRequestObjectResult(new { error = "No active bills found in local database for this location" });
+            }
+
+            _logger.LogInformation("Found {BillCount} active bills for location {LocationId}", localBills.Count, locationId);
+
+            var results = new List<object>();
+            var createdCount = 0;
+            var matchedCount = 0;
+            var failedCount = 0;
+            var missingSupplierMappings = 0;
+            var missingProductMappings = 0;
+
+            // Step 3: Process each bill
+            foreach (var localBill in localBills)
+            {
+                try
+                {
+                    _logger.LogInformation("Processing bill: {BillNo} (ID: {BillId})", localBill.BillNo, localBill.BillID);
+
+                    // Check for existing VOM bill mapping first
+                    var existingMapping = await _context.BillMappings
+                        .FirstOrDefaultAsync(bm => bm.BillId == localBill.BillID && bm.LocationId == locationId);
+
+                    if (existingMapping != null)
+                    {
+                        matchedCount++;
+                        results.Add(new
+                        {
+                            local_bill_id = localBill.BillID,
+                            vom_bill_id = existingMapping.VomBillId,
+                            status = "already_mapped",
+                            action = "existing_mapping"
+                        });
+                        _logger.LogInformation("Bill {BillNo} already has VOM mapping: {VomBillId}",
+                            localBill.BillNo, existingMapping.VomBillId);
+                        continue;
+                    }
+
+                    // Try to find matching VOM bill by bill number or date
+                    VomBill? matchingVomBill = null;
+
+                    if (!string.IsNullOrEmpty(localBill.BillNo))
+                    {
+                        matchingVomBill = vomBills.FirstOrDefault(vb =>
+                            !string.IsNullOrEmpty(vb.bill_no) && vb.bill_no.Equals(localBill.BillNo, StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    int vomBillId;
+
+                    if (matchingVomBill != null)
+                    {
+                        // Bill already exists in VOM, use existing ID
+                        vomBillId = matchingVomBill.id;
+                        matchedCount++;
+
+                        results.Add(new
+                        {
+                            local_bill_id = localBill.BillID,
+                            vom_bill_id = vomBillId,
+                            status = "matched",
+                            action = "existing"
+                        });
+
+                        _logger.LogInformation("Found matching VOM bill for {BillNo}: VOM ID {VomBillId}",
+                            localBill.BillNo, vomBillId);
+                    }
+                    else
+                    {
+                        // Bill doesn't exist in VOM, need to create it
+
+                        // First, resolve supplier mapping
+                        int? vomSupplierId = null;
+                        if (localBill.SupplierID.HasValue && localBill.SupplierID.Value > 0)
+                        {
+                            var supplierMapping = await _context.SupplierMappings
+                                .FirstOrDefaultAsync(sm => sm.SupplierId == localBill.SupplierID && sm.LocationId == locationId);
+
+                            if (supplierMapping != null)
+                            {
+                                vomSupplierId = supplierMapping.VomSupplierId;
+                            }
+                            else
+                            {
+                                missingSupplierMappings++;
+                                _logger.LogWarning("No VOM supplier mapping found for local SupplierID {SupplierId} at location {LocationId}.",
+                                    localBill.SupplierID, locationId);
+                                // Skip this bill if no supplier mapping found
+                                failedCount++;
+                                results.Add(new
+                                {
+                                    local_bill_id = localBill.BillID,
+                                    status = "failed",
+                                    error = "Missing supplier mapping - sync suppliers first"
+                                });
+                                continue;
+                            }
+                        }
+
+                        // Prepare bill items with mapped product IDs
+                        var vomBillItems = new List<object>();
+                        bool hasProductMappingIssues = false;
+
+                        foreach (var billDetail in localBill.BillDetails)
+                        {
+                            if (billDetail.ItemID.HasValue)
+                            {
+                                // Try to find product mapping
+                                var productMapping = await _context.ProductMappings
+                                    .FirstOrDefaultAsync(pm => pm.ItemId == billDetail.ItemID && pm.LocationId == locationId);
+
+                                if (productMapping != null && productMapping.VomProductId > 0)
+                                {
+                                    vomBillItems.Add(new
+                                    {
+                                        product_id = productMapping.VomProductId,
+                                        quantity = billDetail.Quantity ?? 1,
+                                        unit_price = billDetail.Cost ?? 0,
+                                        total_price = billDetail.Total ?? 0,
+                                        notes = billDetail.Remarks
+                                    });
+                                }
+                                else
+                                {
+                                    missingProductMappings++;
+                                    hasProductMappingIssues = true;
+                                    _logger.LogWarning("No VOM product mapping found for ItemID {ItemId} (Name: {ItemName}) in bill {BillNo}",
+                                        billDetail.ItemID, billDetail.ItemName, localBill.BillNo);
+                                }
+                            }
+                        }
+
+                        // Skip bill if there are product mapping issues and no items can be mapped
+                        if (hasProductMappingIssues && vomBillItems.Count == 0)
+                        {
+                            failedCount++;
+                            results.Add(new
+                            {
+                                local_bill_id = localBill.BillID,
+                                status = "failed",
+                                error = "Missing product mappings for all items - sync products first"
+                            });
+                            continue;
+                        }
+
+                        // Create VOM bill request with available data
+                        var vomRequest = new
+                        {
+                            bill_no = localBill.BillNo ?? $"BILL-{localBill.BillID}",
+                            date = localBill.Date?.ToString("yyyy-MM-dd") ?? DateTime.Now.ToString("yyyy-MM-dd"),
+                            due_date = localBill.DueDate?.ToString("yyyy-MM-dd"),
+                            notes = localBill.Remarks,
+                            supplier_id = vomSupplierId,
+                            warehouse_id = 1, // Default warehouse - should be configurable
+                            items = vomBillItems,
+                            subtotal = localBill.SubTotal ?? 0,
+                            discount = localBill.Discount ?? 0,
+                            tax = localBill.Tax ?? 0,
+                            total = localBill.Total ?? 0
+                        };
+
+                        _logger.LogInformation("Attempting to create bill in VOM: {BillNo} (ID: {BillId}) with {ItemCount} items",
+                            localBill.BillNo, localBill.BillID, vomBillItems.Count);
+
+                        var vomResponse = await _vomApiService.CreatePurchaseBillAsync(vomRequest);
+
+                        if (vomResponse != null && vomResponse.id > 0)
+                        {
+                            vomBillId = vomResponse.id;
+                            createdCount++;
+
+                            _logger.LogInformation("Successfully created bill in VOM: {BillNo} -> VOM ID: {VomBillId}",
+                                localBill.BillNo, vomBillId);
+
+                            results.Add(new
+                            {
+                                local_bill_id = localBill.BillID,
+                                vom_bill_id = vomBillId,
+                                status = "created",
+                                action = "new",
+                                items_count = vomBillItems.Count,
+                                missing_product_mappings = hasProductMappingIssues
+                            });
+                        }
+                        else
+                        {
+                            failedCount++;
+                            _logger.LogError("Failed to create bill {BillNo} (ID: {BillId}) in VOM. Response was null or invalid",
+                                localBill.BillNo, localBill.BillID);
+
+                            results.Add(new
+                            {
+                                local_bill_id = localBill.BillID,
+                                status = "failed",
+                                error = "Failed to create bill in VOM - check logs for details"
+                            });
+                            continue; // Skip mapping creation
+                        }
+                    }
+
+                    // Step 4: Create or update mapping
+                    var mapping = new BillMapping
+                    {
+                        BillId = localBill.BillID,
+                        VomBillId = vomBillId,
+                        LocationId = locationId
+                    };
+                    _context.BillMappings.Add(mapping);
+
+                    await _context.SaveChangesAsync();
+                    _logger.LogInformation("Successfully saved mapping for Bill ID {BillId} -> VOM Bill ID {VomBillId}",
+                        localBill.BillID, vomBillId);
+                }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    _logger.LogError(ex, "Error processing bill {BillId}", localBill.BillID);
+                    results.Add(new
+                    {
+                        local_bill_id = localBill.BillID,
+                        status = "failed",
+                        error = ex.Message
+                    });
+                }
+            }
+
+            return new OkObjectResult(new
+            {
+                message = "Bill sync completed",
+                total_local_bills = localBills.Count,
+                total_vom_bills = vomBills.Count,
+                created_bills = createdCount,
+                matched_bills = matchedCount,
+                failed_bills = failedCount,
+                missing_supplier_mappings = missingSupplierMappings,
+                missing_product_mappings = missingProductMappings,
+                user_id = userId,
+                location_id = locationId,
+                results
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in SyncBillsToVom function");
+            return new StatusCodeResult(500);
+        }
+    }
+
+    [Function("GetBillsForLocation")]
+    public async Task<IActionResult> GetBillsForLocation([HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
+    {
+        try
+        {
+            _logger.LogInformation("Get bills for location endpoint called.");
+
+            // Get authorization header
+            if (!req.Headers.TryGetValue("Authorization", out var authHeader) ||
+                !authHeader.ToString().StartsWith("Bearer "))
+            {
+                return new UnauthorizedResult();
+            }
+
+            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
+            var userId = sessionData!.UserID;
+            var locationId = sessionData.LocationID;
+
+            _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId}",
+                userId, locationId);
+
+            // Get all bills for this location (regardless of status)
+            var allBills = await _context.Bills
+                .Include(b => b.BillDetails)
+                    .ThenInclude(bd => bd.Item)
+                .Where(b => b.LocationID == locationId)
+                .Select(b => new
+                {
+                    b.BillID,
+                    b.BillNo,
+                    b.StatusID,
+                    b.LocationID,
+                    b.SupplierID,
+                    b.Total,
+                    b.Date,
+                    BillItemsCount = b.BillDetails.Count(),
+                    BillItems = b.BillDetails.Select(bd => new {
+                        bd.ItemID,
+                        ItemName = bd.Item != null ? bd.Item.Name : null,
+                        bd.Quantity,
+                        bd.StatusID
+                    }).ToList()
+                })
+                .ToListAsync();
+
+            // Also get bills with StatusID = 1 specifically
+            var activeBills = await _context.Bills
+                .Where(b => b.LocationID == locationId && b.StatusID == 1)
+                .Select(b => new
+                {
+                    b.BillID,
+                    b.BillNo,
+                    b.StatusID,
+                    b.LocationID,
+                    b.SupplierID,
+                    b.Total,
+                    b.Date,
+                    BillItemsCount = b.BillDetails.Count()
+                })
+                .ToListAsync();
+
+            return new OkObjectResult(new
+            {
+                location_id = locationId,
+                user_id = userId,
+                all_bills_count = allBills.Count,
+                active_bills_count = activeBills.Count,
+                all_bills = allBills,
+                active_bills = activeBills
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in GetBillsForLocation function");
             return new StatusCodeResult(500);
         }
     }

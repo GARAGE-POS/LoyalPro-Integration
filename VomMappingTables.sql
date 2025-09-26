@@ -65,3 +65,20 @@ CREATE TABLE Garage_UAT.dbo.IntegrationVomIntegrationProductMappings (
 CREATE INDEX IX_IntegrationVomIntegrationProductMappings_ItemId ON Garage_UAT.dbo.IntegrationVomIntegrationProductMappings(ItemId);
 CREATE INDEX IX_IntegrationVomIntegrationProductMappings_LocationId ON Garage_UAT.dbo.IntegrationVomIntegrationProductMappings(LocationId);
 CREATE INDEX IX_IntegrationVomIntegrationProductMappings_VomProductId ON Garage_UAT.dbo.IntegrationVomIntegrationProductMappings(VomProductId);
+
+-- Create IntegrationVomIntegrationBillMappings table to store mappings between local bills and Vom purchase bills
+CREATE TABLE Garage_UAT.dbo.IntegrationVomIntegrationBillMappings (
+    Id int IDENTITY(1,1) NOT NULL,
+    BillId int NOT NULL,
+    VomBillId int NOT NULL,
+    LocationId int NOT NULL,
+    CreatedAt datetime2 NOT NULL DEFAULT GETUTCDATE(),
+    UpdatedAt datetime2 NULL,
+    CONSTRAINT PK_IntegrationVomIntegrationBillMappings PRIMARY KEY (Id),
+    CONSTRAINT FK_IntegrationVomIntegrationBillMappings_Bills FOREIGN KEY (BillId) REFERENCES Garage_UAT.dbo.inv_Bill(BillID)
+);
+
+-- Create index for better query performance
+CREATE INDEX IX_IntegrationVomIntegrationBillMappings_BillId ON Garage_UAT.dbo.IntegrationVomIntegrationBillMappings(BillId);
+CREATE INDEX IX_IntegrationVomIntegrationBillMappings_LocationId ON Garage_UAT.dbo.IntegrationVomIntegrationBillMappings(LocationId);
+CREATE INDEX IX_IntegrationVomIntegrationBillMappings_VomBillId ON Garage_UAT.dbo.IntegrationVomIntegrationBillMappings(VomBillId);

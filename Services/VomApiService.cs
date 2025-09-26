@@ -17,6 +17,8 @@ public interface IVomApiService
     Task<List<VomCategory>?> GetAllCategoriesAsync();
     Task<List<VomProduct>?> GetAllProductsAsync();
     Task<VomProduct?> SearchProductByNameAsync(string productName);
+    Task<List<VomBill>?> GetAllPurchaseBillsAsync();
+    Task<VomBill?> CreatePurchaseBillAsync(object billData);
 }
 
 // VOM Unit models
@@ -118,6 +120,47 @@ public class VomProduct
 public class VomProductsResponse
 {
     public List<VomProduct>? data { get; set; }
+}
+
+// VOM Purchase Bill models
+public class VomBill
+{
+    public int id { get; set; }
+    public string? bill_no { get; set; }
+    public string? date { get; set; }
+    public string? due_date { get; set; }
+    public string? notes { get; set; }
+    public decimal? subtotal { get; set; }
+    public decimal? discount { get; set; }
+    public decimal? tax { get; set; }
+    public decimal? total { get; set; }
+    public int? supplier_id { get; set; }
+    public int? warehouse_id { get; set; }
+    public string? status { get; set; }
+    public DateTime? created_at { get; set; }
+    public DateTime? updated_at { get; set; }
+    public List<VomBillItem>? items { get; set; }
+}
+
+public class VomBillItem
+{
+    public int? product_id { get; set; }
+    public string? product_name { get; set; }
+    public int? quantity { get; set; }
+    public decimal? unit_price { get; set; }
+    public decimal? total_price { get; set; }
+    public string? unit { get; set; }
+    public string? notes { get; set; }
+}
+
+public class VomBillsResponse
+{
+    public List<VomBill>? data { get; set; }
+}
+
+public class VomBillCreateResponse
+{
+    public VomBill? purchase_bill { get; set; }
 }
 
 public class VomApiService : IVomApiService
@@ -517,6 +560,106 @@ public class VomApiService : IVomApiService
 
         _logger.LogWarning("Could not find product '{ProductName}' through search", productName);
         return null;
+    }
+
+    public async Task<List<VomBill>?> GetAllPurchaseBillsAsync()
+    {
+        var token = await GetAuthToken();
+        if (string.IsNullOrEmpty(token))
+        {
+            return default;
+        }
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/api/purchases/purchase-bills");
+        AddCommonHeaders(request);
+        request.Headers.Add("Authorization", $"Bearer {token}");
+
+        var response = await _httpClient.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            var responseContent = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(responseContent);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("data", out var dataElement))
+            {
+                if (dataElement.ValueKind == JsonValueKind.Array)
+                {
+                    return JsonSerializer.Deserialize<List<VomBill>>(dataElement.GetRawText());
+                }
+                else if (dataElement.ValueKind == JsonValueKind.Object && dataElement.TryGetProperty("purchase_bills", out var billsElement))
+                {
+                    // Handle case where bills are nested under data.purchase_bills
+                    return JsonSerializer.Deserialize<List<VomBill>>(billsElement.GetRawText());
+                }
+                else if (dataElement.ValueKind == JsonValueKind.Object)
+                {
+                    var singleBill = JsonSerializer.Deserialize<VomBill>(dataElement.GetRawText());
+                    return singleBill != null ? new List<VomBill> { singleBill } : new List<VomBill>();
+                }
+                else if (dataElement.ValueKind == JsonValueKind.Null)
+                {
+                    return new List<VomBill>();
+                }
+            }
+            _logger.LogWarning("Unexpected JSON structure in purchase bills response: {Content}", responseContent);
+            return new List<VomBill>();
+        }
+
+        _logger.LogError("GET request to /api/purchases/purchase-bills failed. Status: {StatusCode}", response.StatusCode);
+        return default;
+    }
+
+    public async Task<VomBill?> CreatePurchaseBillAsync(object billData)
+    {
+        var token = await GetAuthToken();
+        if (string.IsNullOrEmpty(token))
+        {
+            _logger.LogError("Cannot create purchase bill - no valid token");
+            return default;
+        }
+
+        var jsonContent = JsonSerializer.Serialize(billData);
+        var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+        _logger.LogInformation("Creating purchase bill with data: {Data}", jsonContent);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/api/purchases/purchase-bills");
+        request.Content = content;
+        AddCommonHeaders(request);
+        var authHeader = $"Bearer {token}";
+        request.Headers.Add("Authorization", authHeader);
+
+        var response = await _httpClient.SendAsync(request);
+        var responseContent = await response.Content.ReadAsStringAsync();
+
+        if (response.IsSuccessStatusCode)
+        {
+            _logger.LogInformation("POST request to create purchase bill succeeded. Response: {Response}", responseContent);
+
+            // Parse the VOM API response structure: { "status": 200, "data": {...}, "success": true }
+            using var doc = JsonDocument.Parse(responseContent);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("success", out var successElement) && successElement.GetBoolean() &&
+                root.TryGetProperty("data", out var dataElement))
+            {
+                // Handle purchase bill creation response which may have nested "purchase_bill" object
+                if (dataElement.TryGetProperty("purchase_bill", out var billElement))
+                {
+                    _logger.LogInformation("Purchase bill creation successful, parsing bill from response");
+                    return JsonSerializer.Deserialize<VomBill>(billElement.GetRawText());
+                }
+                // Handle regular responses
+                return JsonSerializer.Deserialize<VomBill>(dataElement.GetRawText());
+            }
+
+            _logger.LogWarning("VOM API response format unexpected or success=false: {Response}", responseContent);
+            return default;
+        }
+
+        _logger.LogError("POST request to create purchase bill failed. Status: {StatusCode}, Response: {Response}", response.StatusCode, responseContent);
+        return default;
     }
 
     private void AddCommonHeaders(HttpRequestMessage request)
