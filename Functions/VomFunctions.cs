@@ -1426,28 +1426,19 @@ public class VomFunctions
             _logger.LogInformation("Update bills to Vom endpoint called.");
 
             // Extract and validate session authentication
-            if (!req.Headers.TryGetValue("Authorization", out var authHeader) || authHeader.Count == 0)
+            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
+            if (authResult != null)
             {
-                return new UnauthorizedObjectResult(new { error = "Missing Authorization header" });
+                return authResult;
             }
 
-            var authToken = authHeader.First();
-            if (!authToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-            {
-                return new UnauthorizedObjectResult(new { error = "Invalid Authorization header format" });
-            }
-
-            var sessionToken = authToken.Substring(7); // Remove "Bearer " prefix
-
-            // Validate session and extract user/location info
-            var sessionData = await _sessionAuthService.ValidateSessionAsync(sessionToken);
-            if (sessionData?.UserID == null || sessionData?.LocationID == null)
+            if (sessionData == null)
             {
                 return new UnauthorizedObjectResult(new { error = "Invalid or expired session" });
             }
 
-            int userId = sessionData.UserID.Value;
-            int locationId = sessionData.LocationID.Value;
+            int userId = sessionData.UserID;
+            int locationId = sessionData.LocationID;
 
             _logger.LogInformation("Processing bill updates for user {UserId} at location {LocationId}", userId, locationId);
 

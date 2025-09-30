@@ -20,7 +20,6 @@ public class SadeqFunctions
     private readonly string _sadeqAccountSecret;
     private readonly string _sadeqRequestUsername;
     private readonly string _sadeqRequestPassword;
-    private readonly string _templateId;
 
     public SadeqFunctions(ILogger<SadeqFunctions> logger, HttpClient httpClient)
     {
@@ -35,7 +34,6 @@ public class SadeqFunctions
         _sadeqAccountSecret = Environment.GetEnvironmentVariable("SADQ_ACCOUNT_SECRET") ?? "";
         _sadeqRequestUsername = Environment.GetEnvironmentVariable("SADQ_REQUEST_USERNAME") ?? "";
         _sadeqRequestPassword = Environment.GetEnvironmentVariable("SADQ_REQUEST_PASSWORD") ?? "";
-        _templateId = Environment.GetEnvironmentVariable("TEMPLATE_ID") ?? "";
     }
 
     [Function("sadeq_request")]
@@ -61,7 +59,7 @@ public class SadeqFunctions
             var root = doc.RootElement;
 
             // Check required fields
-            var requiredFields = new[] { "destinationName", "destinationEmail", "destinationPhoneNumber", "nationalId" };
+            var requiredFields = new[] { "destinationName", "destinationEmail", "destinationPhoneNumber", "nationalId", "templateId" };
             var missingFields = new List<string>();
 
             foreach (var field in requiredFields)
@@ -82,6 +80,7 @@ public class SadeqFunctions
             var destinationEmail = root.GetProperty("destinationEmail").GetString()!;
             var destinationPhoneNumber = root.GetProperty("destinationPhoneNumber").GetString()!;
             var nationalId = root.GetProperty("nationalId").GetString()!;
+            var templateId = root.GetProperty("templateId").GetString()!;
 
             // Execute the workflow: get token, initiate envelope, send invitation
             var accessToken = await GetSadeqToken();
@@ -90,7 +89,7 @@ public class SadeqFunctions
                 return new ObjectResult("Failed to obtain access token.") { StatusCode = 500 };
             }
 
-            var documentId = await InitiateEnvelopeByTemplate(accessToken);
+            var documentId = await InitiateEnvelopeByTemplate(accessToken, templateId);
             if (string.IsNullOrEmpty(documentId))
             {
                 return new ObjectResult("Failed to obtain document ID.") { StatusCode = 500 };
@@ -113,7 +112,7 @@ public class SadeqFunctions
                         signatories = new object[] { },
                         availableTo = GetDate30DaysFromNow(),
                         allowUserToSignAnyWhere = false,
-                        authenticationType = 7,
+                        authenticationType = 1,
                         invitationLanguage = 1,
                         redirectUrl = "",
                         allowUserToAddDestination = false
@@ -163,6 +162,7 @@ public class SadeqFunctions
         var content = new StringContent(payload, Encoding.UTF8, "application/x-www-form-urlencoded");
 
         _httpClient.DefaultRequestHeaders.Clear();
+        _httpClient.DefaultRequestHeaders.Add("accept", "application/json");
         _httpClient.DefaultRequestHeaders.Add("Authorization", $"Basic {basicAuth}");
 
         var response = await _httpClient.PostAsync(url, content);
@@ -184,7 +184,7 @@ public class SadeqFunctions
         return null;
     }
 
-    private async Task<string?> InitiateEnvelopeByTemplate(string accessToken)
+    private async Task<string?> InitiateEnvelopeByTemplate(string accessToken, string templateId)
     {
         if (string.IsNullOrEmpty(accessToken))
         {
@@ -195,7 +195,7 @@ public class SadeqFunctions
         var url = $"{_sadeqUrl}/IntegrationService/Document/Initiate-envelope-by-template";
         
         var formData = new MultipartFormDataContent();
-        formData.Add(new StringContent(_templateId), "TemplateId");
+        formData.Add(new StringContent(templateId), "TemplateId");
         formData.Add(new StringContent("false"), "UserOnlySigner");
 
         _httpClient.DefaultRequestHeaders.Clear();

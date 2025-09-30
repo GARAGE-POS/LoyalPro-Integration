@@ -87,7 +87,7 @@ public class TamaraFunctions
             }
             catch (JsonException)
             {
-                return new BadRequestObjectResult(new { detail = "Invalid or missing JSON body" });
+                return new BadRequestObjectResult(new { success = false, message = "Invalid or missing JSON body" });
             }
 
             var root = body.RootElement;
@@ -105,7 +105,7 @@ public class TamaraFunctions
 
             if (string.IsNullOrEmpty(eventType) || !allowedEvents.Contains(eventType))
             {
-                return new BadRequestObjectResult(new { detail = "Unsupported event type" });
+                return new BadRequestObjectResult(new { success = false, message = "Unsupported event type" });
             }
 
             var orderId = root.TryGetProperty("order_id", out var orderIdElement) ? orderIdElement.GetString() : null;
@@ -154,7 +154,7 @@ public class TamaraFunctions
             }
             catch (JsonException)
             {
-                return new BadRequestObjectResult(new { detail = "Invalid or missing JSON body" });
+                return new BadRequestObjectResult(new { success = false, message = "Invalid or missing JSON body" });
             }
 
             var root = payload.RootElement;
@@ -173,7 +173,7 @@ public class TamaraFunctions
 
             if (missingKeys.Any())
             {
-                return new BadRequestObjectResult(new { detail = $"Missing required keys: {string.Join(", ", missingKeys)}" });
+                return new BadRequestObjectResult(new { success = false, message = $"Missing required keys: {string.Join(", ", missingKeys)}" });
             }
 
             var url = _tamaraApiUrl + "checkout/in-store-session";
@@ -186,6 +186,17 @@ public class TamaraFunctions
 
             var response = await _httpClient.PostAsync(url, content);
             var responseContent = await response.Content.ReadAsStringAsync();
+
+            // Log the Tamara API response
+            _logger.LogInformation("Tamara API Response - Status: {StatusCode}, Content: {ResponseContent}", 
+                (int)response.StatusCode, responseContent);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorMessage = $"Tamara API request failed with status {(int)response.StatusCode}";
+                _logger.LogError("Tamara session creation failed: {ErrorMessage}", errorMessage);
+                return new BadRequestObjectResult(new { success = false, message = errorMessage });
+            }
 
             // Extract numeric part from order_reference_id (e.g., 'REF_2907' -> 2907)
             var orderReferenceId = root.TryGetProperty("order_reference_id", out var orderRefElement) ? orderRefElement.GetString() : "";
@@ -209,59 +220,61 @@ public class TamaraFunctions
             // Insert into TamaraOrders table if possible
             try
             {
-                if (response.IsSuccessStatusCode)
-                {
-                    var responseJson = JsonDocument.Parse(responseContent);
-                    var tamaraCheckoutId = responseJson.RootElement.TryGetProperty("checkout_id", out var checkoutElement) ? checkoutElement.GetString() : null;
-                    var tamaraOrderId = responseJson.RootElement.TryGetProperty("order_id", out var orderElement) ? orderElement.GetString() : null;
+                var responseJson = JsonDocument.Parse(responseContent);
+                var tamaraCheckoutId = responseJson.RootElement.TryGetProperty("checkout_id", out var checkoutElement) ? checkoutElement.GetString() : null;
+                var tamaraOrderId = responseJson.RootElement.TryGetProperty("order_id", out var orderElement) ? orderElement.GetString() : null;
 
-                    // Save to DB if all values present
-                    if (orderId.HasValue && !string.IsNullOrEmpty(tamaraOrderId) && !string.IsNullOrEmpty(tamaraCheckoutId))
+                // Save to DB if all values present
+                if (orderId.HasValue && !string.IsNullOrEmpty(tamaraOrderId) && !string.IsNullOrEmpty(tamaraCheckoutId))
+                {
+                    var orderCheckoutId = FetchOrderCheckoutDetails(orderId.Value);
+                    if (orderCheckoutId.HasValue)
                     {
-                        var orderCheckoutId = FetchOrderCheckoutDetails(orderId.Value);
-                        if (orderCheckoutId.HasValue)
-                        {
-                            using var connection = new SqlConnection(_connectionString);
-                            await connection.OpenAsync();
-                            
-                            var sql = @"
-                                INSERT INTO TamaraOrders (OrderCheckOutID, TamaraOrderID, TamaraCheckOutID)
-                                VALUES (@OrderCheckOutID, @TamaraOrderID, @TamaraCheckOutID)";
-                            
-                            using var command = new SqlCommand(sql, connection);
-                            command.Parameters.AddWithValue("@OrderCheckOutID", orderCheckoutId.Value);
-                            command.Parameters.AddWithValue("@TamaraOrderID", tamaraOrderId);
-                            command.Parameters.AddWithValue("@TamaraCheckOutID", tamaraCheckoutId);
-                            
-                            await command.ExecuteNonQueryAsync();
-                        }
+                        using var connection = new SqlConnection(_connectionString);
+                        await connection.OpenAsync();
+                        
+                        var sql = @"
+                            INSERT INTO TamaraOrders (OrderCheckOutID, TamaraOrderID, TamaraCheckOutID)
+                            VALUES (@OrderCheckOutID, @TamaraOrderID, @TamaraCheckOutID)";
+                        
+                        using var command = new SqlCommand(sql, connection);
+                        command.Parameters.AddWithValue("@OrderCheckOutID", orderCheckoutId.Value);
+                        command.Parameters.AddWithValue("@TamaraOrderID", tamaraOrderId);
+                        command.Parameters.AddWithValue("@TamaraCheckOutID", tamaraCheckoutId);
+                        
+                        await command.ExecuteNonQueryAsync();
+                        _logger.LogInformation("Successfully saved Tamara order to database - OrderCheckoutID: {OrderCheckoutId}, TamaraOrderID: {TamaraOrderId}", 
+                            orderCheckoutId.Value, tamaraOrderId);
                     }
                     else
                     {
-                        _logger.LogWarning("Missing values for TamaraOrders insert: order_id={OrderId}, tamara_order_id={TamaraOrderId}, tamara_checkout_id={TamaraCheckoutId}", 
-                            orderId, tamaraOrderId, tamaraCheckoutId);
+                        _logger.LogWarning("OrderCheckoutID not found for OrderID: {OrderId}", orderId.Value);
                     }
                 }
+                else
+                {
+                    _logger.LogWarning("Missing values for TamaraOrders insert: order_id={OrderId}, tamara_order_id={TamaraOrderId}, tamara_checkout_id={TamaraCheckoutId}", 
+                        orderId, tamaraOrderId, tamaraCheckoutId);
+                }
+
+                return new OkObjectResult(new { success = true, message = "Tamara session created successfully", checkout_id = tamaraCheckoutId, order_id = tamaraOrderId });
+            }
+            catch (JsonException jsonEx)
+            {
+                var errorMessage = "Failed to parse Tamara API response";
+                _logger.LogError(jsonEx, "{ErrorMessage}: {ResponseContent}", errorMessage, responseContent);
+                return new BadRequestObjectResult(new { success = false, message = errorMessage });
             }
             catch (Exception dbEx)
             {
-                _logger.LogError(dbEx, "Failed to insert TamaraOrders");
-            }
-
-            try
-            {
-                var responseObj = JsonSerializer.Deserialize<object>(responseContent);
-                return new ObjectResult(responseObj) { StatusCode = (int)response.StatusCode };
-            }
-            catch (JsonException)
-            {
-                return new ObjectResult(new { detail = responseContent }) { StatusCode = (int)response.StatusCode };
+                _logger.LogError(dbEx, "Failed to insert TamaraOrders to database");
+                return new OkObjectResult(new { success = true, message = "Tamara session created successfully but failed to save to database", warning = "Database save failed" });
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating Tamara session");
-            return new StatusCodeResult(500);
+            return new ObjectResult(new { success = false, message = "Internal server error occurred while creating Tamara session" }) { StatusCode = 500 };
         }
     }
 
