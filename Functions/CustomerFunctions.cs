@@ -1,11 +1,15 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
 using Karage.Functions.Models;
 using Karage.Functions.Data;
 using Karage.Functions.Services;
+using System.Net;
 using System.Text.RegularExpressions;
 
 
@@ -26,6 +30,13 @@ public class CustomerFunctions
 
 
     [Function("Customers")]
+    [OpenApiOperation(operationId: "SearchCustomerByPhoneNumber", tags: new[] { "Customers" }, Summary = "Search customer by phone number", Description = "Searches for a customer using their phone number")]
+    [OpenApiSecurity("X-API-Key", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "X-API-Key")]
+    [OpenApiParameter(name: "filter[phone]", In = ParameterLocation.Query, Required = true, Type = typeof(string), Description = "Customer phone number to search for")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Customer found successfully")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.NotFound, contentType: "application/json", bodyType: typeof(object), Description = "Customer not found")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(object), Description = "Invalid phone number format")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing API key")]
     public async Task<IActionResult> SearchCustomerByPhoneNumber(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
     {
@@ -79,6 +90,13 @@ public class CustomerFunctions
     }
 
     [Function("CreateCustomer")]
+    [OpenApiOperation(operationId: "CreateCustomer", tags: new[] { "Customers" }, Summary = "Create new customer", Description = "Creates a new customer with the provided information")]
+    [OpenApiSecurity("X-API-Key", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "X-API-Key")]
+    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(CreateCustomerRequest), Required = true, Description = "Customer information")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.Created, contentType: "application/json", bodyType: typeof(object), Description = "Customer created successfully")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(object), Description = "Invalid request data")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.Conflict, contentType: "application/json", bodyType: typeof(object), Description = "Customer with phone number already exists")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing API key")]
     public async Task<IActionResult> AddCustomer(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
@@ -168,6 +186,14 @@ public class CustomerFunctions
     }
 
     [Function("UpdateCustomer")]
+    [OpenApiOperation(operationId: "UpdateCustomer", tags: new[] { "Customers" }, Summary = "Update customer", Description = "Updates an existing customer's information")]
+    [OpenApiSecurity("X-API-Key", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "X-API-Key")]
+    [OpenApiParameter(name: "customerId", In = ParameterLocation.Path, Required = true, Type = typeof(int), Description = "Customer ID to update")]
+    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(UpdateCustomerRequest), Required = true, Description = "Updated customer information")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Customer updated successfully")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.NotFound, contentType: "application/json", bodyType: typeof(object), Description = "Customer not found")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(object), Description = "Invalid request data")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing API key")]
     public async Task<IActionResult> UpdateCustomer(
         [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "UpdateCustomer/{customerId}")] HttpRequest req)
     {
@@ -268,6 +294,21 @@ public class CustomerFunctions
         }
         return null;
     }
-    
-    
+}
+
+// OpenAPI Models for Customer functions
+public class CreateCustomerRequest
+{
+    public string name { get; set; } = string.Empty;
+    public string? email { get; set; }
+    public string phone { get; set; } = string.Empty;
+    public int phone_prefix { get; set; }
+}
+
+public class UpdateCustomerRequest
+{
+    public string? name { get; set; }
+    public string? email { get; set; }
+    public string? phone { get; set; }
+    public int? phone_prefix { get; set; }
 }

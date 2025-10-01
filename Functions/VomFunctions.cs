@@ -453,9 +453,6 @@ public class VomFunctions
             var locationId = sessionData.LocationID;
             var userId = sessionData.UserID;
 
-            // TEMPORARY: Override to test with Location 404 which has categories
-            locationId = 404;
-
             _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId} (TESTING with Location 404)",
                 userId, locationId);
 
@@ -527,9 +524,9 @@ public class VomFunctions
             {
                 try
                 {
-                    // Try to find matching VOM category by name
+                    // Try to find matching VOM category by name_en (VOM API returns name_en/name_ar fields)
                     var matchingVomCategory = vomCategories.FirstOrDefault(vc =>
-                        !string.IsNullOrEmpty(vc.name) && vc.name.Equals(localCategory.name, StringComparison.OrdinalIgnoreCase));
+                        !string.IsNullOrEmpty(vc.name_en) && vc.name_en.Equals(localCategory.name, StringComparison.OrdinalIgnoreCase));
 
                     int vomCategoryId;
 

@@ -64,6 +64,8 @@ public class VomCategory
 {
     public int id { get; set; }
     public string? name { get; set; }
+    public string? name_en { get; set; }
+    public string? name_ar { get; set; }
     public string? description { get; set; }
     public string? image { get; set; }
     public int? parent_id { get; set; }
@@ -169,7 +171,7 @@ public class VomApiService : IVomApiService
     private readonly HttpClient _httpClient;
     private readonly ILogger<VomApiService> _logger;
     private const string BaseUrl = "https://nouravom.getvom.com";
-    private const string ApiAgent = "zapier";
+    private const string ApiAgent = "ios";
     private const string AcceptLanguage = "en";
     
     private string? _cachedToken;

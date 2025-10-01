@@ -43,7 +43,7 @@ CREATE TABLE UnitMappings (
 ```bash
 # Tested Login Request
 curl --location 'https://nouravom.getvom.com/api/companyuser/login' \
-  --header 'Api-Agent: zapier' \
+  --header 'Api-Agent: ios' \
   --header 'Content-Type: application/json' \
   --header 'Accept: application/json' \
   --header 'Accept-Language: en' \
@@ -81,7 +81,7 @@ curl --location 'https://nouravom.getvom.com/api/companyuser/login' \
 ```bash
 # Tested Units Request (using token from login)
 curl --location 'https://nouravom.getvom.com/api/products/units' \
-  --header 'Api-Agent: zapier' \
+  --header 'Api-Agent: ios' \
   --header 'Content-Type: application/json' \
   --header 'Accept: application/json' \
   --header 'Accept-Language: en' \

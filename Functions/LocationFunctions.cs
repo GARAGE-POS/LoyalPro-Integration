@@ -1,10 +1,14 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
 using Karage.Functions.Data;
 using Karage.Functions.Services;
+using System.Net;
 
 namespace Karage.Functions.Functions;
 
@@ -22,6 +26,10 @@ public class LocationFunctions
     }
 
     [Function("GetLocationsForUser")]
+    [OpenApiOperation(operationId: "GetLocationsForUser", tags: new[] { "Locations" }, Summary = "Get locations for user", Description = "Retrieves all active locations associated with the authenticated user")]
+    [OpenApiSecurity("X-API-Key", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "X-API-Key")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Locations retrieved successfully")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing API key")]
     public async Task<IActionResult> GetLocationsForUser(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
     {

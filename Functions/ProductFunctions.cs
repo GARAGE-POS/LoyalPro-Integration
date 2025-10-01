@@ -1,10 +1,14 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
 using Karage.Functions.Data;
 using Karage.Functions.Services;
+using System.Net;
 
 namespace Karage.Functions.Functions;
 
@@ -22,6 +26,12 @@ public class ProductFunctions
     }
 
     [Function("GetProducts")]
+    [OpenApiOperation(operationId: "GetProducts", tags: new[] { "Products" }, Summary = "Get products", Description = "Retrieves paginated list of products for the authenticated user's locations")]
+    [OpenApiSecurity("X-API-Key", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "X-API-Key")]
+    [OpenApiParameter(name: "page", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Page number (default: 1)")]
+    [OpenApiParameter(name: "pageSize", In = ParameterLocation.Query, Required = false, Type = typeof(int), Description = "Number of items per page (default: 20, max: 100)")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Products retrieved successfully")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing API key")]
     public async Task<IActionResult> GetProducts(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
     {

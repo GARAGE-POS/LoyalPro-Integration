@@ -1,12 +1,16 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
 using Karage.Functions.Models;
 using Karage.Functions.Data;
 using Karage.Functions.Services;
 using Microsoft.Extensions.Configuration;
+using System.Net;
 
 namespace Karage.Functions.Functions;
 
@@ -65,6 +69,13 @@ public class OrderFunctions
     }
 
     [Function("GetOrderPayload")]
+    [OpenApiOperation(operationId: "GetOrderPayload", tags: new[] { "Orders" }, Summary = "Get order payload", Description = "Retrieves complete order information including items, customer, and amounts")]
+    [OpenApiSecurity("X-API-Key", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "X-API-Key")]
+    [OpenApiParameter(name: "orderId", In = ParameterLocation.Query, Required = true, Type = typeof(int), Description = "Order ID to retrieve")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(OrderPayloadResponseDto), Description = "Order retrieved successfully")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.NotFound, contentType: "application/json", bodyType: typeof(object), Description = "Order not found")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(object), Description = "Invalid order ID")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing API key")]
     public async Task<IActionResult> GetOrderPayload(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
     {

@@ -12,7 +12,8 @@
       "Bash(curl:*)",
       "Bash(sqlcmd:*)",
       "Bash(func host start:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
