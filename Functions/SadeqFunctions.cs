@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Extensions.Logging;
+using Microsoft.OpenApi.Models;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 
@@ -37,6 +40,11 @@ public class SadeqFunctions
     }
 
     [Function("sadeq_request")]
+    [OpenApiOperation(operationId: "SadeqRequest", tags: new[] { "Sadeq" }, Summary = "Create Sadeq digital signature request", Description = "Initiates a digital signature envelope and sends invitation to specified recipient")]
+    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(SadeqRequest), Required = true, Description = "Sadeq signature request details")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Signature request created successfully")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(object), Description = "Missing required fields")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.InternalServerError, Description = "Internal server error")]
     public async Task<IActionResult> SadeqRequest(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "sadeq_request")] HttpRequest req)
     {
@@ -140,6 +148,8 @@ public class SadeqFunctions
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing Sadeq request");
+            _logger.LogTrace(ex.StackTrace);
+            _logger.LogInformation("Sadeq Request Username: {Username}", _sadeqRequestUsername);
             return new StatusCodeResult(500);
         }
     }
@@ -231,4 +241,14 @@ public class SadeqFunctions
         var futureDate = DateTime.Now.AddDays(30);
         return futureDate.ToString("yyyy-MM-dd");
     }
+}
+
+// OpenAPI Models for Sadeq functions
+public class SadeqRequest
+{
+    public string destinationName { get; set; } = string.Empty;
+    public string destinationEmail { get; set; } = string.Empty;
+    public string destinationPhoneNumber { get; set; } = string.Empty;
+    public string nationalId { get; set; } = string.Empty;
+    public string templateId { get; set; } = string.Empty;
 }

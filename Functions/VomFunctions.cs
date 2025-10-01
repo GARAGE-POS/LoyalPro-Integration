@@ -1,11 +1,15 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
 using Karage.Functions.Models;
 using Karage.Functions.Data;
 using Karage.Functions.Services;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -39,6 +43,11 @@ public class VomFunctions
     }
 
     [Function("SyncUnitsToVom")]
+    [OpenApiOperation(operationId: "SyncUnitsToVom", tags: new[] { "VOM Integration" }, Summary = "Sync units to VOM", Description = "Synchronizes local units to VOM accounting system. Use Authorization header with format: Bearer POS-xxxxx")]
+    [OpenApiSecurity("Authorization", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "Authorization", Description = "Session token in format: Bearer POS-xxxxx")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(VomSyncResponse), Description = "Units synced successfully")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing session token")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorResponse), Description = "Bad request or sync error")]
     public async Task<IActionResult> SyncUnitsToVom(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
@@ -215,6 +224,10 @@ public class VomFunctions
     }
 
     [Function("SyncSuppliersToVom")]
+    [OpenApiOperation(operationId: "SyncSuppliersToVom", tags: new[] { "VOM Integration" }, Summary = "Sync suppliers to VOM", Description = "Synchronizes local suppliers to VOM accounting system")]
+    [OpenApiSecurity("Authorization", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "Authorization", Description = "Session token in format: Bearer POS-xxxxx")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(VomSyncResponse), Description = "Suppliers synced successfully")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing session token")]
     public async Task<IActionResult> SyncSuppliersToVom(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
@@ -414,6 +427,10 @@ public class VomFunctions
     }
 
     [Function("SyncCategoriesToVom")]
+    [OpenApiOperation(operationId: "SyncCategoriesToVom", tags: new[] { "VOM Integration" }, Summary = "Sync categories to VOM", Description = "Synchronizes local categories to VOM accounting system")]
+    [OpenApiSecurity("Authorization", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "Authorization", Description = "Session token in format: Bearer POS-xxxxx")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(VomSyncResponse), Description = "Categories synced successfully")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing session token")]
     public async Task<IActionResult> SyncCategoriesToVom(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
@@ -639,6 +656,8 @@ public class VomFunctions
     }
 
     [Function("ClearInvalidProductMappings")]
+    [OpenApiOperation(operationId: "ClearInvalidProductMappings", tags: new[] { "VOM Integration" }, Summary = "Clear invalid product mappings", Description = "Removes product mappings with invalid VOM product IDs (-1)")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Invalid mappings cleared successfully")]
     public async Task<IActionResult> ClearInvalidProductMappings(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
@@ -670,6 +689,10 @@ public class VomFunctions
     }
 
     [Function("SyncProductsToVom")]
+    [OpenApiOperation(operationId: "SyncProductsToVom", tags: new[] { "VOM Integration" }, Summary = "Sync products to VOM", Description = "Synchronizes local products to VOM accounting system")]
+    [OpenApiSecurity("Authorization", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "Authorization")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(VomSyncResponse), Description = "Products synced successfully")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing session token")]
     public async Task<IActionResult> SyncProductsToVom(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
@@ -1015,6 +1038,10 @@ public class VomFunctions
     }
 
     [Function("SyncBillsToVom")]
+    [OpenApiOperation(operationId: "SyncBillsToVom", tags: new[] { "VOM Integration" }, Summary = "Sync bills to VOM", Description = "Synchronizes local purchase bills to VOM accounting system")]
+    [OpenApiSecurity("Authorization", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "Authorization")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Bills synced successfully")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing session token")]
     public async Task<IActionResult> SyncBillsToVom(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
@@ -1336,6 +1363,10 @@ public class VomFunctions
     }
 
     [Function("GetBillsForLocation")]
+    [OpenApiOperation(operationId: "GetBillsForLocation", tags: new[] { "VOM Integration" }, Summary = "Get bills for location", Description = "Retrieves all bills for the authenticated user's location")]
+    [OpenApiSecurity("Authorization", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "Authorization")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Bills retrieved successfully")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing session token")]
     public async Task<IActionResult> GetBillsForLocation([HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req)
     {
         try
@@ -1419,6 +1450,10 @@ public class VomFunctions
     }
 
     [Function("UpdateBillsToVom")]
+    [OpenApiOperation(operationId: "UpdateBillsToVom", tags: new[] { "VOM Integration" }, Summary = "Update bills in VOM", Description = "Updates existing bills in VOM from local reconciliation records")]
+    [OpenApiSecurity("Authorization", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "Authorization")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Bills updated successfully")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing session token")]
     public async Task<IActionResult> UpdateBillsToVom([HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
         try
@@ -1580,4 +1615,20 @@ public class VomFunctions
             return new StatusCodeResult(500);
         }
     }
+}
+
+// OpenAPI Models for VOM functions
+public class VomSyncResponse
+{
+    public string message { get; set; } = string.Empty;
+    public int total_local_units { get; set; }
+    public int total_vom_units { get; set; }
+    public int created_units { get; set; }
+    public int matched_units { get; set; }
+    public List<object> results { get; set; } = new();
+}
+
+public class ErrorResponse
+{
+    public string error { get; set; } = string.Empty;
 }

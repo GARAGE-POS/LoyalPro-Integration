@@ -1,11 +1,15 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.SqlClient;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 
@@ -22,6 +26,12 @@ public class TamaraFunctions
     private readonly string _tamaraAuthToken;
     private readonly string _tamaraNotificationToken;
 
+    // SMS Environment variables
+    private readonly string _unifonicApiUrl;
+    private readonly string _appSid;
+    private readonly string _unifonicUsername;
+    private readonly string _unifonicPassword;
+
     public TamaraFunctions(ILogger<TamaraFunctions> logger, HttpClient httpClient, IConfiguration configuration)
     {
         _logger = logger;
@@ -32,9 +42,21 @@ public class TamaraFunctions
         _tamaraApiUrl = Environment.GetEnvironmentVariable("TAMARA_API_URL") ?? "https://api-sandbox.tamara.co/";
         _tamaraAuthToken = Environment.GetEnvironmentVariable("TAMARA_AUTH_TOKEN") ?? "";
         _tamaraNotificationToken = Environment.GetEnvironmentVariable("TAMARA_NOTIFICATION_TOKEN") ?? "";
+
+        // Load SMS environment variables
+        _unifonicApiUrl = Environment.GetEnvironmentVariable("UNIFONIC_API_URL") ?? "https://api.unifonic.com/rest/SMS/messages";
+        _appSid = Environment.GetEnvironmentVariable("APP_SID") ?? "";
+        _unifonicUsername = Environment.GetEnvironmentVariable("UNIFONIC_USERNAME") ?? "";
+        _unifonicPassword = Environment.GetEnvironmentVariable("UNIFONIC_PASSWORD") ?? "";
     }
 
     [Function("tamara-webhook")]
+    [OpenApiOperation(operationId: "TamaraWebhook", tags: new[] { "Tamara" }, Summary = "Tamara webhook endpoint", Description = "Receives webhook events from Tamara payment service")]
+    [OpenApiParameter(name: "tamaraToken", In = ParameterLocation.Query, Required = true, Type = typeof(string), Description = "JWT token from Tamara for webhook authentication")]
+    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(TamaraWebhookRequest), Required = true, Description = "Tamara webhook event payload")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Webhook processed successfully")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorResponse), Description = "Unsupported event type")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.Unauthorized, contentType: "application/json", bodyType: typeof(object), Description = "Invalid or missing tamaraToken")]
     public async Task<IActionResult> TamaraWebhook(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "tamara-webhook")] HttpRequest req)
     {
@@ -112,15 +134,15 @@ public class TamaraFunctions
 
             if (eventType == "order_approved")
             {
-                UpdateOrderCheckoutDetailsUsingTamara(orderId, 103);
+                UpdateOrderStatusUsingTamara(orderId, 103);
             }
             else if (eventType == "order_canceled")
             {
-                UpdateOrderCheckoutDetailsUsingTamara(orderId, 105);
+                UpdateOrderStatusUsingTamara(orderId, 105);
             }
             else if (eventType == "order_refunded")
             {
-                UpdateOrderCheckoutDetailsUsingTamara(orderId, 106);
+                UpdateOrderStatusUsingTamara(orderId, 106);
             }
             else
             {
@@ -227,37 +249,52 @@ public class TamaraFunctions
                 // Save to DB if all values present
                 if (orderId.HasValue && !string.IsNullOrEmpty(tamaraOrderId) && !string.IsNullOrEmpty(tamaraCheckoutId))
                 {
-                    var orderCheckoutId = FetchOrderCheckoutDetails(orderId.Value);
-                    if (orderCheckoutId.HasValue)
-                    {
-                        using var connection = new SqlConnection(_connectionString);
-                        await connection.OpenAsync();
-                        
-                        var sql = @"
-                            INSERT INTO TamaraOrders (OrderCheckOutID, TamaraOrderID, TamaraCheckOutID)
-                            VALUES (@OrderCheckOutID, @TamaraOrderID, @TamaraCheckOutID)";
-                        
-                        using var command = new SqlCommand(sql, connection);
-                        command.Parameters.AddWithValue("@OrderCheckOutID", orderCheckoutId.Value);
-                        command.Parameters.AddWithValue("@TamaraOrderID", tamaraOrderId);
-                        command.Parameters.AddWithValue("@TamaraCheckOutID", tamaraCheckoutId);
-                        
-                        await command.ExecuteNonQueryAsync();
-                        _logger.LogInformation("Successfully saved Tamara order to database - OrderCheckoutID: {OrderCheckoutId}, TamaraOrderID: {TamaraOrderId}", 
-                            orderCheckoutId.Value, tamaraOrderId);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("OrderCheckoutID not found for OrderID: {OrderId}", orderId.Value);
-                    }
+                    using var connection = new SqlConnection(_connectionString);
+                    await connection.OpenAsync();
+
+                    var sql = @"
+                        INSERT INTO IntegrationTamaraOrders (OrderID, TamaraOrderID, TamaraCheckoutID)
+                        VALUES (@OrderID, @TamaraOrderID, @TamaraCheckoutID)";
+
+                    using var command = new SqlCommand(sql, connection);
+                    command.Parameters.AddWithValue("@OrderID", orderId.Value);
+                    command.Parameters.AddWithValue("@TamaraOrderID", tamaraOrderId);
+                    command.Parameters.AddWithValue("@TamaraCheckoutID", tamaraCheckoutId);
+
+                    await command.ExecuteNonQueryAsync();
+                    _logger.LogInformation("Successfully saved Tamara order to database - OrderID: {OrderId}, TamaraOrderID: {TamaraOrderId}",
+                        orderId.Value, tamaraOrderId);
                 }
                 else
                 {
-                    _logger.LogWarning("Missing values for TamaraOrders insert: order_id={OrderId}, tamara_order_id={TamaraOrderId}, tamara_checkout_id={TamaraCheckoutId}", 
+                    _logger.LogWarning("Missing values for TamaraOrders insert: order_id={OrderId}, tamara_order_id={TamaraOrderId}, tamara_checkout_id={TamaraCheckoutId}",
                         orderId, tamaraOrderId, tamaraCheckoutId);
                 }
 
-                return new OkObjectResult(new { success = true, message = "Tamara session created successfully", checkout_id = tamaraCheckoutId, order_id = tamaraOrderId });
+                // Send SMS with checkout URL if phone number is provided and valid
+                var phoneNumber = root.TryGetProperty("phone_number", out var phoneElement) ? phoneElement.GetString() : null;
+                var checkoutUrl = responseJson.RootElement.TryGetProperty("checkout_deeplink", out var urlElement) ? urlElement.GetString() : null;
+
+                if (!string.IsNullOrEmpty(phoneNumber) && !string.IsNullOrEmpty(checkoutUrl) && IsValidSaudiPhoneNumber(phoneNumber))
+                {
+                    try
+                    {
+                        // Normalize phone number to international format for SMS
+                        var normalizedPhone = NormalizePhoneNumber(phoneNumber);
+                        await SendTamaraCheckoutSms(normalizedPhone, checkoutUrl);
+                        _logger.LogInformation("SMS sent successfully to {PhoneNumber} for checkout {CheckoutId}", normalizedPhone, tamaraCheckoutId);
+                    }
+                    catch (Exception smsEx)
+                    {
+                        _logger.LogError(smsEx, "Failed to send SMS to {PhoneNumber} for checkout {CheckoutId}", phoneNumber, tamaraCheckoutId);
+                    }
+                }
+                else if (!string.IsNullOrEmpty(phoneNumber) && !IsValidSaudiPhoneNumber(phoneNumber))
+                {
+                    _logger.LogWarning("Invalid Saudi phone number format: {PhoneNumber}", phoneNumber);
+                }
+
+                return new OkObjectResult(new { success = true, message = "Tamara session created successfully", checkout_id = tamaraCheckoutId, order_id = tamaraOrderId, checkout_deeplink = checkoutUrl });
             }
             catch (JsonException jsonEx)
             {
@@ -278,36 +315,11 @@ public class TamaraFunctions
         }
     }
 
-    private int? FetchOrderCheckoutDetails(int orderId)
-    {
-        var query = @"
-            SELECT oc.OrderCheckOutID
-            FROM Orders o
-            JOIN OrderCheckout oc ON oc.OrderID = o.OrderID
-            WHERE o.OrderID = @OrderID";
-
-        try
-        {
-            using var connection = new SqlConnection(_connectionString);
-            connection.Open();
-            using var command = new SqlCommand(query, connection);
-            command.Parameters.AddWithValue("@OrderID", orderId);
-            
-            var result = command.ExecuteScalar();
-            return result as int?;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error fetching order checkout details for OrderID: {OrderId}", orderId);
-            return null;
-        }
-    }
-
-    private void UpdateOrderCheckoutDetailsUsingTamara(string? orderId, int orderStatus)
+    private void UpdateOrderStatusUsingTamara(string? orderId, int orderStatus)
     {
         if (string.IsNullOrEmpty(orderId))
         {
-            _logger.LogWarning("OrderID is null or empty, cannot update order status");
+            _logger.LogWarning("TamaraOrderID is null or empty, cannot update order status");
             return;
         }
 
@@ -315,123 +327,140 @@ public class TamaraFunctions
         {
             using var connection = new SqlConnection(_connectionString);
             connection.Open();
-            using var transaction = connection.BeginTransaction();
 
-            try
+            // Update Orders table via IntegrationTamaraOrders mapping
+            var query = @"
+                UPDATE Orders
+                SET StatusID = @OrderStatus
+                WHERE OrderID = (
+                    SELECT OrderID
+                    FROM IntegrationTamaraOrders
+                    WHERE TamaraOrderID = @TamaraOrderID
+                )";
+
+            using var command = new SqlCommand(query, connection);
+            command.Parameters.AddWithValue("@OrderStatus", orderStatus);
+            command.Parameters.AddWithValue("@TamaraOrderID", orderId);
+            var rowsAffected = command.ExecuteNonQuery();
+
+            if (rowsAffected > 0)
             {
-                if (orderStatus == 106) // order_refunded
-                {
-                    // Update OrderCheckoutDetails
-                    var query1 = @"
-                        UPDATE OrderCheckoutDetails
-                        SET OrderStatus = @OrderStatus
-                        WHERE OrderCheckOutID = (
-                            SELECT OrderCheckOutID        
-                            FROM TamaraOrders
-                            WHERE TamaraOrderID = @TamaraOrderID
-                        )
-                        AND CardType = 'Tamara'";
-
-                    using var command1 = new SqlCommand(query1, connection, transaction);
-                    command1.Parameters.AddWithValue("@OrderStatus", orderStatus);
-                    command1.Parameters.AddWithValue("@TamaraOrderID", orderId);
-                    var rowsAffected1 = command1.ExecuteNonQuery();
-
-                    if (rowsAffected1 == 0)
-                    {
-                        _logger.LogWarning("No OrderCheckoutDetails updated for TamaraOrderID={TamaraOrderId}", orderId);
-                    }
-
-                    // Update OrderCheckout
-                    var query2 = @"
-                        UPDATE OrderCheckout
-                        SET OrderStatus = @OrderStatus
-                        WHERE OrderCheckOutID = (
-                            SELECT OrderCheckOutID        
-                            FROM TamaraOrders
-                            WHERE TamaraOrderID = @TamaraOrderID
-                        )";
-
-                    using var command2 = new SqlCommand(query2, connection, transaction);
-                    command2.Parameters.AddWithValue("@OrderStatus", orderStatus);
-                    command2.Parameters.AddWithValue("@TamaraOrderID", orderId);
-                    command2.ExecuteNonQuery();
-
-                    // Update Orders - First, fetch the OrderID
-                    var fetchOrderIdQuery = @"
-                        SELECT OrderID
-                        FROM OrderCheckout
-                        WHERE OrderCheckOutID = (
-                            SELECT OrderCheckOutID        
-                            FROM TamaraOrders
-                            WHERE TamaraOrderID = @TamaraOrderID
-                        )";
-
-                    using var fetchCommand = new SqlCommand(fetchOrderIdQuery, connection, transaction);
-                    fetchCommand.Parameters.AddWithValue("@TamaraOrderID", orderId);
-                    var realOrderId = fetchCommand.ExecuteScalar() as int?;
-
-                    if (realOrderId.HasValue)
-                    {
-                        _logger.LogInformation("Real OrderID for TamaraOrderID={TamaraOrderId} is {RealOrderId}", orderId, realOrderId.Value);
-                        
-                        var query3 = @"
-                            UPDATE Orders
-                            SET StatusID = @OrderStatus
-                            WHERE OrderID = @OrderID";
-
-                        using var command3 = new SqlCommand(query3, connection, transaction);
-                        command3.Parameters.AddWithValue("@OrderStatus", orderStatus);
-                        command3.Parameters.AddWithValue("@OrderID", realOrderId.Value);
-                        command3.ExecuteNonQuery();
-                    }
-                    else
-                    {
-                        _logger.LogWarning("No OrderID found for TamaraOrderID={TamaraOrderId} when updating Orders table", orderId);
-                    }
-
-                    transaction.Commit();
-                    _logger.LogInformation("OrderCheckoutDetails, OrderCheckout, and Orders updated for TamaraOrderID={TamaraOrderId} to status {OrderStatus}", orderId, orderStatus);
-                }
-                else
-                {
-                    // For other statuses, only update OrderCheckoutDetails
-                    var query = @"
-                        UPDATE OrderCheckoutDetails
-                        SET OrderStatus = @OrderStatus
-                        WHERE OrderCheckOutID = (
-                            SELECT OrderCheckOutID        
-                            FROM TamaraOrders
-                            WHERE TamaraOrderID = @TamaraOrderID
-                        )
-                        AND CardType = 'Tamara'";
-
-                    using var command = new SqlCommand(query, connection, transaction);
-                    command.Parameters.AddWithValue("@OrderStatus", orderStatus);
-                    command.Parameters.AddWithValue("@TamaraOrderID", orderId);
-                    var rowsAffected = command.ExecuteNonQuery();
-
-                    if (rowsAffected == 0)
-                    {
-                        _logger.LogWarning("No OrderCheckoutDetails updated for TamaraOrderID={TamaraOrderId}", orderId);
-                    }
-                    else
-                    {
-                        transaction.Commit();
-                        _logger.LogInformation("OrderCheckoutDetails updated for TamaraOrderID={TamaraOrderId} to status {OrderStatus}", orderId, orderStatus);
-                    }
-                }
+                _logger.LogInformation("Orders table updated for TamaraOrderID={TamaraOrderId} to StatusID={OrderStatus}", orderId, orderStatus);
             }
-            catch (Exception)
+            else
             {
-                transaction.Rollback();
-                throw;
+                _logger.LogWarning("No orders updated for TamaraOrderID={TamaraOrderId}", orderId);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to update OrderCheckoutDetails for TamaraOrderID={TamaraOrderId}", orderId);
+            _logger.LogError(ex, "Failed to update Orders table for TamaraOrderID={TamaraOrderId}", orderId);
             throw;
         }
     }
+
+    private async Task SendTamaraCheckoutSms(string recipient, string checkoutUrl)
+    {
+        var message = $"Complete your Tamara payment: {checkoutUrl}";
+
+        var payload = new List<KeyValuePair<string, string>>
+        {
+            new("AppSid", _appSid),
+            new("Body", message),
+            new("Recipient", recipient),
+            new("SenderID", "Karage"),
+            new("responseType", "json")
+        };
+
+        var formContent = new FormUrlEncodedContent(payload);
+
+        // Set basic authentication
+        var authValue = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{_unifonicUsername}:{_unifonicPassword}"));
+        _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authValue);
+
+        var response = await _httpClient.PostAsync(_unifonicApiUrl, formContent);
+        var responseContent = await response.Content.ReadAsStringAsync();
+
+        // Clear auth header for next request
+        _httpClient.DefaultRequestHeaders.Authorization = null;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("SMS API request failed with status {StatusCode}, response: {ResponseContent}",
+                (int)response.StatusCode, responseContent);
+            throw new Exception($"SMS API request failed with status {(int)response.StatusCode}");
+        }
+
+        var responseJson = JsonDocument.Parse(responseContent).RootElement;
+        var success = responseJson.TryGetProperty("success", out var successElement) && successElement.GetBoolean();
+
+        if (!success)
+        {
+            var errorMessage = responseJson.TryGetProperty("message", out var msgElement) ? msgElement.GetString() : "Unknown error";
+            _logger.LogError("SMS sending failed: {ErrorMessage}", errorMessage);
+            throw new Exception($"SMS sending failed: {errorMessage}");
+        }
+    }
+
+    private static bool IsValidSaudiPhoneNumber(string phone)
+    {
+        if (string.IsNullOrEmpty(phone))
+            return false;
+
+        // Remove any whitespace
+        phone = phone.Trim();
+
+        // Handle both +966 and 00966 formats
+        string numberPart;
+        if (phone.StartsWith("+966"))
+        {
+            numberPart = phone[4..];
+        }
+        else if (phone.StartsWith("00966"))
+        {
+            numberPart = phone[5..];
+        }
+        else
+        {
+            return false;
+        }
+
+        // Should be exactly 9 digits after country code
+        if (numberPart.Length == 9 && numberPart.All(char.IsDigit))
+        {
+            // Saudi mobile numbers start with 5 after the country code
+            return numberPart.StartsWith('5');
+        }
+
+        return false;
+    }
+
+    private static string NormalizePhoneNumber(string phone)
+    {
+        if (string.IsNullOrEmpty(phone))
+            return phone;
+
+        phone = phone.Trim();
+
+        // Convert 00966 to +966 format for SMS API
+        if (phone.StartsWith("00966"))
+        {
+            return "+966" + phone[5..];
+        }
+
+        // Already in +966 format
+        if (phone.StartsWith("+966"))
+        {
+            return phone;
+        }
+
+        return phone;
+    }
+}
+
+// OpenAPI Models for Tamara functions
+public class TamaraWebhookRequest
+{
+    public string event_type { get; set; } = string.Empty;
+    public string order_id { get; set; } = string.Empty;
 }

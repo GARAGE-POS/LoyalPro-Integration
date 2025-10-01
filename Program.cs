@@ -7,6 +7,9 @@ using Karage.Functions.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Abstractions;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Configurations;
+using Karage.Functions;
 
 
 var builder = FunctionsApplication.CreateBuilder(args);
@@ -60,6 +63,9 @@ builder.Services.AddHttpClient<VomApiService>(client =>
 
 // Add default HttpClient for other services
 builder.Services.AddHttpClient();
+
+// Configure OpenAPI
+builder.Services.AddSingleton<IOpenApiConfigurationOptions, KarageOpenApiConfigurationOptions>();
 
 // Add global exception handler
 builder.Services.AddLogging(logging =>

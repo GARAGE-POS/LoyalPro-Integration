@@ -1,8 +1,13 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Extensions.OpenApi.Extensions;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
+using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.Extensions.Logging;
+using Microsoft.OpenApi.Models;
 using Karage.Functions.Services;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 
@@ -34,6 +39,12 @@ public class OtpFunctions
     }
 
     [Function("sendotp")]
+    [OpenApiOperation(operationId: "SendOtp", tags: new[] { "OTP" }, Summary = "Send OTP via SMS", Description = "Sends a one-time password to the specified phone number via Unifonic SMS service")]
+    [OpenApiSecurity("X-Auth-Token", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header, Name = "X-Auth-Token")]
+    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(OtpRequest), Required = true, Description = "OTP request containing recipient phone number")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(OtpSuccessResponse), Description = "OTP sent successfully")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(OtpErrorResponse), Description = "Invalid request or SMS service error")]
+    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing authentication token")]
     public async Task<IActionResult> SendOtp(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "sendotp")] HttpRequest req)
     {
@@ -85,40 +96,32 @@ public class OtpFunctions
             var otpCode = GenerateOtp();
             var sendResult = await SendOtpRequest(recipient, otpCode);
 
-            // Prepare response fields
+            // Check if Unifonic API call was successful
             var success = sendResult.GetProperty("success").GetBoolean();
-            var message = sendResult.TryGetProperty("message", out var msgElement) ? msgElement.GetString() : null;
-            var errorCode = sendResult.TryGetProperty("errorCode", out var errorElement) ? errorElement.GetString() : null;
-            
-            var data = new Dictionary<string, object>();
-            if (sendResult.TryGetProperty("data", out var dataElement))
+
+            if (success)
             {
-                foreach (var property in dataElement.EnumerateObject())
+                _logger.LogInformation("OTP sent successfully to {Recipient}", recipient);
+                return new OkObjectResult(new
                 {
-                    data[property.Name] = property.Value.GetRawText().Trim('"');
-                }
-            }
-
-            // Add OTP to data for demo/testing purposes (remove in production)
-            data["otp"] = otpCode;
-
-            var responseJson = new
-            {
-                success = success,
-                message = message,
-                errorCode = errorCode,
-                data = data
-            };
-
-            var statusCode = success ? 200 : 400;
-            
-            if (statusCode == 200)
-            {
-                return new OkObjectResult(responseJson);
+                    success = true,
+                    otp = otpCode
+                });
             }
             else
             {
-                return new BadRequestObjectResult(responseJson);
+                // Log Unifonic error details
+                var errorMessage = sendResult.TryGetProperty("message", out var msgElement) ? msgElement.GetString() : "Unknown error";
+                var errorCode = sendResult.TryGetProperty("errorCode", out var errorElement) ? errorElement.GetString() : null;
+
+                _logger.LogError("Unifonic API error - Code: {ErrorCode}, Message: {ErrorMessage}, Recipient: {Recipient}, Full Response: {Response}",
+                    errorCode, errorMessage, recipient, sendResult.ToString());
+
+                return new BadRequestObjectResult(new
+                {
+                    success = false,
+                    error = errorMessage
+                });
             }
         }
         catch (Exception ex)
@@ -143,22 +146,52 @@ public class OtpFunctions
             new("AppSid", _appSid),
             new("Body", $"Karage OTP is: {otp}"),
             new("Recipient", recipient),
+            new("SenderID", "Karage"),
             new("responseType", "json")
         };
 
         var formContent = new FormUrlEncodedContent(payload);
-        
+
         // Set basic authentication
         var authValue = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{_unifonicUsername}:{_unifonicPassword}"));
         _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authValue);
 
-        var response = await _httpClient.PostAsync(_unifonicApiUrl, formContent);
-        var responseContent = await response.Content.ReadAsStringAsync();
-        
-        // Clear auth header for next request
-        _httpClient.DefaultRequestHeaders.Authorization = null;
-        
-        return JsonDocument.Parse(responseContent).RootElement;
+        try
+        {
+            _logger.LogInformation("Sending OTP request to Unifonic API - Recipient: {Recipient}", recipient);
+
+            var response = await _httpClient.PostAsync(_unifonicApiUrl, formContent);
+            var responseContent = await response.Content.ReadAsStringAsync();
+
+            // Log response status
+            _logger.LogInformation("Unifonic API response - Status: {StatusCode}, Content: {ResponseContent}",
+                (int)response.StatusCode, responseContent);
+
+            // Clear auth header for next request
+            _httpClient.DefaultRequestHeaders.Authorization = null;
+
+            return JsonDocument.Parse(responseContent).RootElement;
+        }
+        catch (HttpRequestException httpEx)
+        {
+            _logger.LogError(httpEx, "HTTP error calling Unifonic API - Recipient: {Recipient}", recipient);
+
+            // Clear auth header
+            _httpClient.DefaultRequestHeaders.Authorization = null;
+
+            // Return error response
+            return JsonDocument.Parse("{\"success\":false,\"message\":\"Failed to connect to SMS service\"}").RootElement;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error calling Unifonic API - Recipient: {Recipient}", recipient);
+
+            // Clear auth header
+            _httpClient.DefaultRequestHeaders.Authorization = null;
+
+            // Return error response
+            return JsonDocument.Parse("{\"success\":false,\"message\":\"Unexpected error occurred\"}").RootElement;
+        }
     }
 
     private bool IsValidPhoneNumber(string phone)
@@ -173,4 +206,22 @@ public class OtpFunctions
         // Check length (10-15 digits)
         return phone.Length >= 10 && phone.Length <= 15;
     }
+}
+
+// OpenAPI Models
+public class OtpRequest
+{
+    public string recipient { get; set; } = string.Empty;
+}
+
+public class OtpSuccessResponse
+{
+    public bool success { get; set; }
+    public string otp { get; set; } = string.Empty;
+}
+
+public class OtpErrorResponse
+{
+    public bool success { get; set; }
+    public string error { get; set; } = string.Empty;
 }

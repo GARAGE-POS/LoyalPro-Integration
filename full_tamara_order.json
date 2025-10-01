@@ -1,0 +1,40 @@
+{
+  "order_number": "390",
+  "payment_type": "PAY_BY_INSTALMENTS",
+  "locale": "ar_SA",
+  "order_reference_id": "REF_390",
+  "total_amount": {
+    "amount": 11.5,
+    "currency": "SAR"
+  },
+  "additional_data": {
+    "store_code": "GARAGE-MAIN"
+  },
+  "phone_number": "+966505166439",
+  "email": "customer@garage.com",
+  "items": [
+    {
+      "unit_price": {
+        "amount": 10,
+        "currency": "SAR"
+      },
+      "name": "I1",
+      "discount_amount": {
+        "amount": 0,
+        "currency": "SAR"
+      },
+      "quantity": 1,
+      "tax_amount": {
+        "amount": 1.5,
+        "currency": "SAR"
+      },
+      "type": "Physical",
+      "reference_id": "175741",
+      "total_amount": {
+        "amount": 11.5,
+        "currency": "SAR"
+      },
+      "sku": "SKU-175741"
+    }
+  ]
+}
