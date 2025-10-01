@@ -369,7 +369,8 @@ public class TamaraFunctions
             new("Body", message),
             new("Recipient", recipient),
             new("SenderID", "Karage"),
-            new("responseType", "json")
+            new("responseType", "json"),
+            new("MessageType", "3")
         };
 
         var formContent = new FormUrlEncodedContent(payload);
