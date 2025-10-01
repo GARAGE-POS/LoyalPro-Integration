@@ -12,6 +12,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Karage.Functions.Services;
 
 namespace Karage.Functions.Functions;
 
@@ -20,6 +21,7 @@ public class TamaraFunctions
     private readonly ILogger<TamaraFunctions> _logger;
     private readonly HttpClient _httpClient;
     private readonly string _connectionString;
+    private readonly ISessionAuthService _sessionAuthService;
     
     // Environment variables
     private readonly string _tamaraApiUrl;
@@ -32,11 +34,12 @@ public class TamaraFunctions
     private readonly string _unifonicUsername;
     private readonly string _unifonicPassword;
 
-    public TamaraFunctions(ILogger<TamaraFunctions> logger, HttpClient httpClient, IConfiguration configuration)
+    public TamaraFunctions(ILogger<TamaraFunctions> logger, HttpClient httpClient, IConfiguration configuration, ISessionAuthService sessionAuthService)
     {
         _logger = logger;
         _httpClient = httpClient;
         _connectionString = configuration.GetConnectionString("V1DatabaseConnectionString") ?? "";
+        _sessionAuthService = sessionAuthService;
         
         // Load environment variables
         _tamaraApiUrl = Environment.GetEnvironmentVariable("TAMARA_API_URL") ?? "https://api-sandbox.tamara.co/";
@@ -160,6 +163,12 @@ public class TamaraFunctions
     }
 
     [Function("create-tamara-session")]
+    [OpenApiOperation(operationId: "CreateTamaraSession", tags: new[] { "Tamara" }, Summary = "Create Tamara checkout session", Description = "Creates a Tamara in-store checkout session for payment processing")]
+    [OpenApiSecurity("bearer_auth", SecuritySchemeType.Http, Scheme = OpenApiSecuritySchemeType.Bearer, BearerFormat = "Session token")]
+    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(object), Required = true, Description = "Tamara checkout session payload")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Session created successfully")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.Unauthorized, contentType: "application/json", bodyType: typeof(ErrorResponse), Description = "Invalid or missing session token")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorResponse), Description = "Invalid request payload")]
     public async Task<IActionResult> CreateTamaraSession(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "create-tamara-session")] HttpRequest req)
     {
@@ -167,6 +176,16 @@ public class TamaraFunctions
 
         try
         {
+            // Verify session authentication
+            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
+            if (authResult != null)
+            {
+                return authResult; // Return unauthorized if session validation failed
+            }
+
+            _logger.LogInformation("Session authenticated for user {UserId} at location {LocationId}",
+                sessionData!.UserID, sessionData.LocationID);
+
             // Parse and validate JSON body
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             JsonDocument payload;
