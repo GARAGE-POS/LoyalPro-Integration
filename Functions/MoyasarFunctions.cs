@@ -40,7 +40,7 @@ public class MoyasarFunctions
     [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid webhook signature")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(MoyasarErrorResponse), Description = "Invalid webhook payload")]
     public async Task<IActionResult> MoyasarWebhook(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "MoyasarWebhook")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
     {
         try
         {
