@@ -657,7 +657,7 @@ public class VomFunctions
     [OpenApiOperation(operationId: "ClearInvalidProductMappings", tags: new[] { "VOM Integration" }, Summary = "Clear invalid product mappings", Description = "Removes product mappings with invalid VOM product IDs (-1)")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Invalid mappings cleared successfully")]
     public async Task<IActionResult> ClearInvalidProductMappings(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "ClearInvalidProductMappings")] HttpRequest req)
     {
         _logger.LogInformation("Clear invalid product mappings endpoint called.");
 

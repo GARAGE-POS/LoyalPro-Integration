@@ -18,7 +18,7 @@
     },
     "extensions": {
         "http": {
-            "routePrefix": "/",
+            "routePrefix": "",
             "customHeaders": {
                 "Access-Control-Allow-Origin": "https://karage.co",
                 "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
