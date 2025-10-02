@@ -13,7 +13,10 @@
       "Bash(sqlcmd:*)",
       "Bash(func host start:*)",
       "Bash(pkill:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(func start --port 7071)",
+      "Bash(tee:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

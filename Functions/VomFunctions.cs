@@ -260,9 +260,10 @@ public class VomFunctions
                 return new BadRequestObjectResult(new { error = "Failed to retrieve suppliers from VOM API" });
             }
 
-            // Step 2: Get all local suppliers with active status for this user
+            // Step 2: Get all local suppliers with active status
+            // Note: Suppliers don't have LocationID, so we sync all active suppliers to ensure bills can reference them
             var localSuppliers = await _context.Suppliers
-                .Where(s => s.StatusID == 1 && s.UserID == userId) // Only active suppliers for this user
+                .Where(s => s.StatusID == 1) // All active suppliers (not filtered by location since Supplier table has no LocationID)
                 .Select(s => new
                 {
                     s.SupplierID,
@@ -1275,6 +1276,7 @@ public class VomFunctions
                         _logger.LogInformation("Attempting to create bill in VOM: {BillNo} (ID: {BillId}) with {ItemCount} items",
                             localBill.BillNo, localBill.BillID, vomBillItems.Count);
 
+                        // Call VOM API and capture detailed error
                         var vomResponse = await _vomApiService.CreatePurchaseBillAsync(vomRequest);
 
                         if (vomResponse != null && vomResponse.id > 0)
@@ -1298,14 +1300,23 @@ public class VomFunctions
                         else
                         {
                             failedCount++;
-                            _logger.LogError("Failed to create bill {BillNo} (ID: {BillId}) in VOM. Response was null or invalid",
-                                localBill.BillNo, localBill.BillID);
+
+                            // Get detailed error from VOM API
+                            var rawResponse = await _vomApiService.PostAsync("/api/purchases/purchase-bills", vomRequest);
+                            var errorContent = await rawResponse.Content.ReadAsStringAsync();
+                            var httpStatusCode = (int)rawResponse.StatusCode;
+
+                            _logger.LogError("Failed to create bill {BillNo} (ID: {BillId}) in VOM. HTTP {StatusCode}: {Error}",
+                                localBill.BillNo, localBill.BillID, httpStatusCode, errorContent);
 
                             results.Add(new
                             {
                                 local_bill_id = localBill.BillID,
+                                bill_no = localBill.BillNo,
                                 status = "failed",
-                                error = "Failed to create bill in VOM - check logs for details"
+                                http_status = httpStatusCode,
+                                error_response = errorContent,
+                                request_payload = vomRequest
                             });
                             continue; // Skip mapping creation
                         }

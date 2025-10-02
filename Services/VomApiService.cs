@@ -661,7 +661,10 @@ public class VomApiService : IVomApiService
             return default;
         }
 
-        _logger.LogError("POST request to create purchase bill failed. Status: {StatusCode}, Response: {Response}", response.StatusCode, responseContent);
+        _logger.LogError("POST request to create purchase bill failed. Status: {StatusCode}, Full Response Body: {Response}", response.StatusCode, responseContent);
+
+        // Also log as warning to make it more visible
+        _logger.LogWarning("VOM API Purchase Bill Creation Error - Status: {StatusCode} | Full Response: {Response}", response.StatusCode, responseContent);
         return default;
     }
 
