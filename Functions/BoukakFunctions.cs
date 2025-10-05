@@ -40,13 +40,10 @@ public class BoukakFunctions
     [OpenApiOperation(operationId: "CreateBoukakCustomerCard", tags: new[] { "Boukak Integration" },
         Summary = "Create Boukak customer loyalty card",
         Description = "Creates a new customer loyalty card in Boukak system when a customer is created locally")]
-    [OpenApiSecurity("Authorization", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header,
-        Name = "Authorization", Description = "Session token in format: Bearer POS-xxxxx")]
     [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(CreateBoukakCustomerCardRequest),
         Description = "Customer information for card creation")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json",
         bodyType: typeof(BoukakCustomerCardResponse), Description = "Customer card created successfully")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing session token")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json",
         bodyType: typeof(ErrorResponse), Description = "Bad request or creation error")]
     public async Task<IActionResult> CreateBoukakCustomerCard(
@@ -56,24 +53,6 @@ public class BoukakFunctions
 
         try
         {
-            // Verify session and get session data
-            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
-            if (authResult != null)
-            {
-                return authResult; // Return unauthorized result
-            }
-
-            if (sessionData == null)
-            {
-                return new BadRequestObjectResult(new { error = "Failed to retrieve session data" });
-            }
-
-            var locationId = sessionData.LocationID;
-            var userId = sessionData.UserID;
-
-            _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId}",
-                userId, locationId);
-
             // Read request body
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             var createRequest = JsonSerializer.Deserialize<CreateBoukakCustomerCardRequest>(requestBody,
@@ -84,6 +63,9 @@ public class BoukakFunctions
                 return new BadRequestObjectResult(new { error = "Invalid request. CustomerId is required." });
             }
 
+            _logger.LogInformation("Processing request for Customer: {CustomerId}",
+                createRequest.CustomerId);
+
             // Get customer from local database
             var customer = await _context.Customers
                 .Where(c => c.CustomerID == createRequest.CustomerId && c.StatusID == 1)
@@ -93,6 +75,9 @@ public class BoukakFunctions
             {
                 return new BadRequestObjectResult(new { error = $"Customer with ID {createRequest.CustomerId} not found or inactive" });
             }
+
+            // Use customer's LocationID for mapping context (defaults to 0 if null)
+            var locationId = customer.LocationID ?? 0;
 
             // Check if customer already has a Boukak card
             var existingMapping = await _context.BoukakCustomerMappings
@@ -194,13 +179,10 @@ public class BoukakFunctions
     [OpenApiOperation(operationId: "AddBoukakStamps", tags: new[] { "Boukak Integration" },
         Summary = "Add stamps to Boukak customer card",
         Description = "Adds loyalty stamps to a customer's Boukak card when they complete an order")]
-    [OpenApiSecurity("Authorization", SecuritySchemeType.ApiKey, In = OpenApiSecurityLocationType.Header,
-        Name = "Authorization", Description = "Session token in format: Bearer POS-xxxxx")]
     [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(AddBoukakStampsRequest),
         Description = "Order information for stamp addition")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json",
         bodyType: typeof(BoukakAddStampsResponse), Description = "Stamps added successfully")]
-    [OpenApiResponseWithoutBody(statusCode: HttpStatusCode.Unauthorized, Description = "Invalid or missing session token")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json",
         bodyType: typeof(ErrorResponse), Description = "Bad request or stamp addition error")]
     public async Task<IActionResult> AddBoukakStamps(
@@ -210,24 +192,6 @@ public class BoukakFunctions
 
         try
         {
-            // Verify session and get session data
-            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
-            if (authResult != null)
-            {
-                return authResult; // Return unauthorized result
-            }
-
-            if (sessionData == null)
-            {
-                return new BadRequestObjectResult(new { error = "Failed to retrieve session data" });
-            }
-
-            var locationId = sessionData.LocationID;
-            var userId = sessionData.UserID;
-
-            _logger.LogInformation("Session authenticated successfully. User: {UserId}, Location: {LocationId}",
-                userId, locationId);
-
             // Read request body
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             var stampRequest = JsonSerializer.Deserialize<AddBoukakStampsRequest>(requestBody,
@@ -238,17 +202,23 @@ public class BoukakFunctions
                 return new BadRequestObjectResult(new { error = "Invalid request. OrderId is required." });
             }
 
+            _logger.LogInformation("Processing stamp request for Order: {OrderId}",
+                stampRequest.OrderId);
+
             // Get order with customer information
             var order = await _context.Orders
                 .Include(o => o.Customer)
                 .Include(o => o.OrderCheckout)
-                .Where(o => o.OrderID == stampRequest.OrderId && o.LocationID == locationId)
+                .Where(o => o.OrderID == stampRequest.OrderId)
                 .FirstOrDefaultAsync();
 
             if (order == null)
             {
                 return new BadRequestObjectResult(new { error = $"Order with ID {stampRequest.OrderId} not found" });
             }
+
+            // Use order's LocationID for mapping context
+            var locationId = order.LocationID;
 
             if (order.CustomerID == null || order.Customer == null)
             {
@@ -447,6 +417,183 @@ public class BoukakFunctions
         else
         {
             _logger.LogWarning("No customer mapping found for Boukak card {CardId}", payload.data.cardId);
+        }
+    }
+
+    [Function("SyncFirst10CustomersToBoukak")]
+    [OpenApiOperation(operationId: "SyncFirst10CustomersToBoukak", tags: new[] { "Boukak Integration" },
+        Summary = "Sync first 10 customers to Boukak",
+        Description = "Creates Boukak loyalty cards for the first 10 active customers")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json",
+        bodyType: typeof(object), Description = "Sync results")]
+    public async Task<IActionResult> SyncFirst10CustomersToBoukak(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post")] HttpRequest req)
+    {
+        _logger.LogInformation("Sync first 10 customers to Boukak endpoint called.");
+
+        var results = new List<object>();
+        var templateId = "0p7KrSlSVGdsmRlqV50z";
+        var platform = "ios";
+        var language = "ar";
+
+        try
+        {
+            // Get first 10 active customers
+            var customers = await _context.Customers
+                .Where(c => c.StatusID == 1)
+                .OrderBy(c => c.CustomerID)
+                .Take(10)
+                .ToListAsync();
+
+            _logger.LogInformation("Found {Count} customers to sync", customers.Count);
+
+            foreach (var customer in customers)
+            {
+                try
+                {
+                    var locationId = customer.LocationID ?? 0;
+
+                    // Check if customer already has a Boukak card
+                    var existingMapping = await _context.BoukakCustomerMappings
+                        .FirstOrDefaultAsync(m => m.CustomerId == customer.CustomerID && m.LocationId == locationId);
+
+                    if (existingMapping != null)
+                    {
+                        _logger.LogInformation("Customer {CustomerId} ({Name}) already has Boukak card: {CardId}",
+                            customer.CustomerID, customer.FullName, existingMapping.BoukakCardId);
+
+                        results.Add(new
+                        {
+                            customerId = customer.CustomerID,
+                            customerName = customer.FullName,
+                            status = "existing",
+                            boukakCardId = existingMapping.BoukakCardId,
+                            message = "Customer already has a Boukak card"
+                        });
+                        continue;
+                    }
+
+                    // Prepare Boukak API request
+                    var boukakRequest = new BoukakCustomerCardRequest
+                    {
+                        templateId = templateId,
+                        platform = platform,
+                        language = language,
+                        customerData = new BoukakCustomerData
+                        {
+                            firstname = customer.FullName?.Split(' ').FirstOrDefault() ?? customer.UserName,
+                            lastname = customer.FullName?.Split(' ').Skip(1).FirstOrDefault() ?? "",
+                            phone = customer.Mobile,
+                            email = customer.Email,
+                            dob = customer.DOB,
+                            gender = customer.Sex,
+                            initialCashback = 0
+                        }
+                    };
+
+                    _logger.LogInformation("Creating Boukak card for customer {CustomerId} ({CustomerName})",
+                        customer.CustomerID, customer.FullName);
+
+                    // Call Boukak API
+                    var boukakResponse = await _boukakApiService.CreateCustomerCardAsync(boukakRequest);
+
+                    if (boukakResponse == null || !boukakResponse.success)
+                    {
+                        _logger.LogWarning("Failed to create Boukak card for customer {CustomerId}: {Message}",
+                            customer.CustomerID, boukakResponse?.message);
+
+                        results.Add(new
+                        {
+                            customerId = customer.CustomerID,
+                            customerName = customer.FullName,
+                            status = "failed",
+                            error = boukakResponse?.message ?? "Unknown error"
+                        });
+                        continue;
+                    }
+
+                    // Validate response
+                    if (string.IsNullOrEmpty(boukakResponse.customerId) || string.IsNullOrEmpty(boukakResponse.cardId))
+                    {
+                        _logger.LogWarning("Boukak API did not return customerId or cardId for customer {CustomerId}",
+                            customer.CustomerID);
+
+                        results.Add(new
+                        {
+                            customerId = customer.CustomerID,
+                            customerName = customer.FullName,
+                            status = "failed",
+                            error = "Boukak API response missing customer or card ID"
+                        });
+                        continue;
+                    }
+
+                    // Create mapping in local database
+                    var mapping = new BoukakCustomerMapping
+                    {
+                        CustomerId = customer.CustomerID,
+                        BoukakCustomerId = boukakResponse.customerId,
+                        BoukakCardId = boukakResponse.cardId,
+                        LocationId = locationId,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    _context.BoukakCustomerMappings.Add(mapping);
+                    await _context.SaveChangesAsync();
+
+                    _logger.LogInformation("Successfully created Boukak card for customer {CustomerId}. Boukak CardId: {CardId}",
+                        customer.CustomerID, boukakResponse.cardId);
+
+                    results.Add(new
+                    {
+                        customerId = customer.CustomerID,
+                        customerName = customer.FullName,
+                        status = "created",
+                        boukakCustomerId = boukakResponse.customerId,
+                        boukakCardId = boukakResponse.cardId,
+                        applePassUrl = boukakResponse.applePassUrl,
+                        passWalletUrl = boukakResponse.passWalletUrl
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error syncing customer {CustomerId}", customer.CustomerID);
+                    results.Add(new
+                    {
+                        customerId = customer.CustomerID,
+                        customerName = customer.FullName,
+                        status = "error",
+                        error = ex.Message
+                    });
+                }
+            }
+
+            // Write results to file
+            var resultsJson = JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true });
+            var resultsFilePath = "/tmp/boukak_sync_results.json";
+            await System.IO.File.WriteAllTextAsync(resultsFilePath, resultsJson);
+
+            _logger.LogInformation("Sync completed. Results saved to {FilePath}", resultsFilePath);
+
+            return new OkObjectResult(new
+            {
+                message = "Sync completed",
+                totalCustomers = customers.Count,
+                resultsFilePath = resultsFilePath,
+                summary = new
+                {
+                    created = results.Count(r => ((dynamic)r).status == "created"),
+                    existing = results.Count(r => ((dynamic)r).status == "existing"),
+                    failed = results.Count(r => ((dynamic)r).status == "failed"),
+                    errors = results.Count(r => ((dynamic)r).status == "error")
+                },
+                results = results
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in SyncFirst10CustomersToBoukak function");
+            return new StatusCodeResult(500);
         }
     }
 }
