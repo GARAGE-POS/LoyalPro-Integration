@@ -46,6 +46,9 @@ builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
 // Register VOM API Service
 builder.Services.AddScoped<IVomApiService, VomApiService>();
 
+// Register Boukak API Service
+builder.Services.AddScoped<IBoukakApiService, BoukakApiService>();
+
 // Register Session Authentication Service
 builder.Services.AddScoped<ISessionAuthService, SessionAuthService>();
 
@@ -59,6 +62,12 @@ builder.Services.AddHttpClient<VomApiService>(client =>
     // Skip SSL verification for the session endpoint (HTTP)
     handler.ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true;
     return handler;
+});
+
+// Add HttpClient for Boukak API Service
+builder.Services.AddHttpClient<BoukakApiService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
 });
 
 // Add default HttpClient for other services

@@ -39,6 +39,7 @@ public class V1DbContext : DbContext
     public DbSet<Reconciliation> Reconciliations { get; set; }
     public DbSet<ReconciliationDetail> ReconciliationDetails { get; set; }
     public DbSet<MoyasarPaymentWebhook> MoyasarPaymentWebhooks { get; set; }
+    public DbSet<BoukakCustomerMapping> BoukakCustomerMappings { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -297,6 +298,19 @@ public class V1DbContext : DbContext
         modelBuilder.Entity<BillDetail>()
             .Property(bd => bd.Total)
             .HasColumnType("float");
+
+        // Configure BoukakCustomerMapping relationships
+        modelBuilder.Entity<BoukakCustomerMapping>()
+            .HasOne(bcm => bcm.Customer)
+            .WithMany()
+            .HasForeignKey(bcm => bcm.CustomerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<BoukakCustomerMapping>()
+            .HasOne(bcm => bcm.Location)
+            .WithMany()
+            .HasForeignKey(bcm => bcm.LocationId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
 
