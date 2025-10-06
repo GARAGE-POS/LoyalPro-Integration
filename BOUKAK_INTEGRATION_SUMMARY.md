@@ -9,7 +9,7 @@ Complete Azure Functions integration with the Boukak loyalty platform API. This 
 **Purpose**: API client service for communicating with Boukak's partner API
 
 **Key Features**:
-- **Base URL**: Uses sandbox environment (`https://sandbox.api.partners.boukak.com`)
+- **Base URL**: Uses production environment (`https://api.partners.boukak.com`)
 - **Authentication**: API key-based authentication in headers
 - **Methods**:
   - `CreateCustomerCardAsync()`: Creates loyalty cards for customers
@@ -22,8 +22,8 @@ Complete Azure Functions integration with the Boukak loyalty platform API. This 
 
 **Configuration**:
 ```csharp
-API Key: 7vojBs2S3OGtW7KwP8Mnr+z1QQ+Ps4p4nVmH8CgeruW/... (configured for sandbox)
-Sandbox URL: https://sandbox.api.partners.boukak.com
+API Key: vTf8du7MwXm/0nu+0y732/hoxYlTirreZoSfiqEu/43sRKmkB+Lczo++dXt0Px7bJ4gTxSeFSDE7DHbo/rO1PFr0BUTSDM+/XGHbMwl8aPmk1b0o85D
+Production URL: https://api.partners.boukak.com
 ```
 
 ### 2. Models/BoukakCustomerMapping.cs
@@ -195,7 +195,7 @@ This implementation follows the **same architecture pattern** as the existing VO
 
 2. **API Key Authentication** (for Boukak API):
    - Service adds `api-key` header to all outbound requests
-   - Uses sandbox API key stored in `BoukakApiService`
+   - Uses production API key stored in `BoukakApiService`
 
 ## Usage Examples
 
@@ -288,12 +288,9 @@ private const string DefaultTemplateId = "default-template-id";
 **For production**: Configure per location or retrieve from database.
 
 ### Environment
-Currently using sandbox: `https://sandbox.api.partners.boukak.com`
+Currently using production: `https://api.partners.boukak.com`
 
-**For production**: Update `BaseUrl` property in `BoukakApiService.cs` to:
-```csharp
-private string BaseUrl => "https://api.partners.boukak.com";
-```
+The service is configured to use the production environment. Sandbox environment is also available at `https://sandbox.api.partners.boukak.com` if needed for testing.
 
 ## Integration Points
 

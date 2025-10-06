@@ -83,10 +83,10 @@ public class BoukakApiService : IBoukakApiService
     private readonly ILogger<BoukakApiService> _logger;
     private const string SandboxBaseUrl = "https://sandbox.api.partners.boukak.com";
     private const string ProductionBaseUrl = "https://api.partners.boukak.com";
-    private const string ApiKey = "7vojBs2S3OGtW7KwP8Mnr+z1QQ+Ps4p4nVmH8CgeruW/+Rql6GxElp+9yYivzNcaBi/h8cQiGjWbT7TVAkyTpftiSQERLvVJHyN8ScP6b1yxB0a6yIWc3B2pKVYr225b+AlwrSTQCniRnvIDK+np2aUvbrnKUFByo8f2Tl38be8DZeSay2EfmB5Vs9sHL285ZpYprBfLVkh9Qah0Xf+RzAD803We+uV6aq6VANO1EHhIbx4LgsdsDnskNGkxmocjEg+uLJVUpADzbqSJNV/l+Q==";
+    private const string ApiKey = "vTf8du7MwXm/0nu+0y732/hoxYlTirreZoSfiqEu/43sRKmkB+Lczo++dXt0Px7bJ4gTxSeFSDE7DHbo/rO1PFr0BUTSDM+/XGHbMwl8aPmk1b0o85D/12RnSl6JYUM0RN6FZhMtcY/J5WA6ZP7UAjHyODv/JLTINywDcO1TRmtvIFAlzS5QdJouo56sBuWfHKdJA9tX8BeKodMZJV6379CNA9vtd6revk92r2RS9rKC9yfhkxLgoXLBfn/1t/ZbX3wvwKVqpE/gelPpK/qmTA==";
 
-    // Use sandbox environment by default
-    private string BaseUrl => SandboxBaseUrl;
+    // Use production environment by default
+    private string BaseUrl => ProductionBaseUrl;
 
     public BoukakApiService(HttpClient httpClient, ILogger<BoukakApiService> logger)
     {

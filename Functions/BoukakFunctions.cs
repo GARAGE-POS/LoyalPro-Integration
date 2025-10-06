@@ -432,7 +432,7 @@ public class BoukakFunctions
         _logger.LogInformation("Sync first 10 customers to Boukak endpoint called.");
 
         var results = new List<object>();
-        var templateId = "0p7KrSlSVGdsmRlqV50z";
+        var templateId = "0iP6uqiMJBcBjxxU5Azp";
         var platform = "ios";
         var language = "ar";
 
@@ -481,10 +481,10 @@ public class BoukakFunctions
                         language = language,
                         customerData = new BoukakCustomerData
                         {
-                            firstname = customer.FullName?.Split(' ').FirstOrDefault() ?? customer.UserName,
+                            firstname = customer.FullName?.Split(' ').FirstOrDefault() ?? customer.UserName ?? "Customer",
                             lastname = customer.FullName?.Split(' ').Skip(1).FirstOrDefault() ?? "",
                             phone = customer.Mobile,
-                            email = customer.Email,
+                            email = !string.IsNullOrEmpty(customer.Email) && customer.Email.Contains("@") ? customer.Email : null,
                             dob = customer.DOB,
                             gender = customer.Sex,
                             initialCashback = 0
