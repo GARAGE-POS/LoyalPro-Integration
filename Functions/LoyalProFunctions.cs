@@ -58,6 +58,30 @@ public class LoyalProFunctions
             _logger.LogInformation("Session authenticated for user {UserId} at location {LocationId}",
                 sessionData!.UserID, sessionData.LocationID);
 
+            // Extract session token from Authorization header for business_reference
+            var authHeader = req.Headers["Authorization"].ToString();
+            var sessionToken = authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                ? authHeader.Substring("Bearer ".Length).Trim()
+                : string.Empty;
+
+            if (string.IsNullOrEmpty(sessionToken))
+            {
+                return new BadRequestObjectResult(new { success = false, message = "Session token could not be extracted from Authorization header" });
+            }
+
+            // Extract business_reference (POS-XXXXX) from session token
+            // Session token format: POS-KARAGE638954291932370545WDD1
+            // We need only: POS-KARAGE
+            var businessReference = sessionToken;
+            if (sessionToken.StartsWith("POS-", StringComparison.OrdinalIgnoreCase))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(sessionToken, @"^(POS-[A-Za-z]+)");
+                if (match.Success)
+                {
+                    businessReference = match.Groups[1].Value;
+                }
+            }
+
             // Parse and validate JSON body
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             JsonDocument payload;
@@ -85,6 +109,7 @@ public class LoyalProFunctions
             var url = _loyalProApiUrl + "reward";
             var loyalProPayload = new
             {
+                business_reference = businessReference,
                 branch_id = branchId,
                 reward_code = rewardCode
             };
@@ -95,8 +120,8 @@ public class LoyalProFunctions
             _httpClient.DefaultRequestHeaders.Clear();
             _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_loyalProAuthToken}");
 
-            _logger.LogInformation("Calling LoyalPro API: {Url} with branch_id={BranchId}, reward_code={RewardCode}",
-                url, branchId, rewardCode);
+            _logger.LogInformation("Calling LoyalPro API: {Url} with business_reference={BusinessReference}, branch_id={BranchId}, reward_code={RewardCode}",
+                url, businessReference, branchId, rewardCode);
 
             var response = await _httpClient.PostAsync(url, content);
             var responseContent = await response.Content.ReadAsStringAsync();
@@ -156,6 +181,30 @@ public class LoyalProFunctions
             _logger.LogInformation("Session authenticated for user {UserId} at location {LocationId}",
                 sessionData!.UserID, sessionData.LocationID);
 
+            // Extract session token from Authorization header for business_reference
+            var authHeader = req.Headers["Authorization"].ToString();
+            var sessionToken = authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                ? authHeader.Substring("Bearer ".Length).Trim()
+                : string.Empty;
+
+            if (string.IsNullOrEmpty(sessionToken))
+            {
+                return new BadRequestObjectResult(new { success = false, message = "Session token could not be extracted from Authorization header" });
+            }
+
+            // Extract business_reference (POS-XXXXX) from session token
+            // Session token format: POS-KARAGE638954291932370545WDD1
+            // We need only: POS-KARAGE
+            var businessReference = sessionToken;
+            if (sessionToken.StartsWith("POS-", StringComparison.OrdinalIgnoreCase))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(sessionToken, @"^(POS-[A-Za-z]+)");
+                if (match.Success)
+                {
+                    businessReference = match.Groups[1].Value;
+                }
+            }
+
             // Parse and validate JSON body
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             JsonDocument payload;
@@ -187,20 +236,43 @@ public class LoyalProFunctions
                 return new BadRequestObjectResult(new { success = false, message = $"Missing required fields: {string.Join(", ", missingFields)}" });
             }
 
-            // Prepare request to LoyalPro API
-            var url = _loyalProApiUrl + "redeem";
+            // Extract fields from request
+            var discountAmount = root.GetProperty("discount_amount").GetDecimal();
+            var redeemed_products = root.GetProperty("redeemed_products");
+            var userId = root.GetProperty("user_id").GetString();
+            var branchId = root.GetProperty("branch_id").GetString();
+            var orderId = root.GetProperty("order_id").GetString();
+            var rewardCode = root.GetProperty("reward_code").GetString();
 
-            // Forward the entire request body to LoyalPro
-            var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+            // Handle optional redeemed_combos
+            object redeemed_combos_value = Array.Empty<object>();
+            if (root.TryGetProperty("redeemed_combos", out var combosElement))
+            {
+                redeemed_combos_value = JsonSerializer.Deserialize<JsonElement>(combosElement.GetRawText());
+            }
+
+            // Prepare request to LoyalPro API with business_reference
+            var url = _loyalProApiUrl + "redeem";
+            var loyalProPayload = new
+            {
+                business_reference = businessReference,
+                discount_amount = discountAmount,
+                redeemed_products = JsonSerializer.Deserialize<JsonElement>(redeemed_products.GetRawText()),
+                redeemed_combos = redeemed_combos_value,
+                user_id = userId,
+                branch_id = branchId,
+                order_id = orderId,
+                reward_code = rewardCode
+            };
+
+            var jsonPayload = JsonSerializer.Serialize(loyalProPayload);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
             _httpClient.DefaultRequestHeaders.Clear();
             _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_loyalProAuthToken}");
 
-            var rewardCode = root.TryGetProperty("reward_code", out var rewardCodeElement) ? rewardCodeElement.GetString() : "N/A";
-            var orderId = root.TryGetProperty("order_id", out var orderIdElement) ? orderIdElement.GetString() : "N/A";
-
-            _logger.LogInformation("Calling LoyalPro redeem API: {Url} with order_id={OrderId}, reward_code={RewardCode}",
-                url, orderId, rewardCode);
+            _logger.LogInformation("Calling LoyalPro redeem API: {Url} with business_reference={BusinessReference}, order_id={OrderId}, reward_code={RewardCode}",
+                url, businessReference, orderId, rewardCode);
 
             var response = await _httpClient.PostAsync(url, content);
             var responseContent = await response.Content.ReadAsStringAsync();
@@ -242,6 +314,7 @@ public class LoyalProRewardRequest
 {
     public string branch_id { get; set; } = string.Empty;
     public string reward_code { get; set; } = string.Empty;
+    // Note: business_reference is extracted from Authorization header (session token)
 }
 
 public class LoyalProRedeemRequest
@@ -253,10 +326,11 @@ public class LoyalProRedeemRequest
     public string branch_id { get; set; } = string.Empty;
     public string order_id { get; set; } = string.Empty;
     public string reward_code { get; set; } = string.Empty;
+    // Note: business_reference is extracted from Authorization header (session token)
 }
 
 public class RedeemedProduct
 {
-    public string itemid { get; set; } = string.Empty;
+    public string id { get; set; } = string.Empty;
     public int quantity { get; set; }
 }
