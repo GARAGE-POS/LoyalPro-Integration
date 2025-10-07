@@ -67,12 +67,16 @@ public class ProductFunctions
 
             var allItems = await _context.MapUniqueItemIDs
                 .Where(m => userLocationIds.Contains(m.LocationID))
+                .Join(_context.Items,
+                    m => m.ItemID,
+                    i => i.ItemID,
+                    (m, i) => new { Mapping = m, Item = i })
                 .ToListAsync();
 
             var grouped = allItems
-                .GroupBy(m => m.UniqueItemID)
+                .GroupBy(x => x.Mapping.UniqueItemID)
                 .Select(g => g.First())
-                .OrderByDescending(m => m.UniqueItemID)
+                .OrderByDescending(x => x.Mapping.UniqueItemID)
                 .ToList();
 
             int totalCount = grouped.Count;
@@ -81,10 +85,11 @@ public class ProductFunctions
             var products = grouped
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
-                .Select(m => new
+                .Select(x => new
                 {
-                    itemID = m.ItemID,
-                    name = m.ProductName
+                    itemID = x.Mapping.ItemID,
+                    name = x.Mapping.ProductName,
+                    price = x.Item.Price
                 })
                 .ToList();
 
