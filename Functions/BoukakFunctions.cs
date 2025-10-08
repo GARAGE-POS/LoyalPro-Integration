@@ -76,8 +76,21 @@ public class BoukakFunctions
                 return new BadRequestObjectResult(new { error = $"Customer with ID {createRequest.CustomerId} not found or inactive" });
             }
 
-            // Use customer's LocationID for mapping context (defaults to 0 if null)
+            // Use customer's LocationID for mapping context
+            // If customer doesn't have a valid location, use the first available location from database
             var locationId = customer.LocationID ?? 0;
+            if (locationId == 0 || !await _context.Locations.AnyAsync(l => l.LocationID == locationId))
+            {
+                // Get the first available location
+                var firstLocation = await _context.Locations.OrderBy(l => l.LocationID).FirstOrDefaultAsync();
+                if (firstLocation == null)
+                {
+                    return new BadRequestObjectResult(new { error = "No valid locations found in database" });
+                }
+                locationId = firstLocation.LocationID;
+                _logger.LogInformation("Customer {CustomerId} has no valid location, using default location {LocationId}",
+                    customer.CustomerID, locationId);
+            }
 
             // Check if customer already has a Boukak card
             var existingMapping = await _context.BoukakCustomerMappings
@@ -102,7 +115,7 @@ public class BoukakFunctions
             var boukakRequest = new BoukakCustomerCardRequest
             {
                 templateId = createRequest.TemplateId ?? DefaultTemplateId,
-                platform = createRequest.Platform ?? "android",
+                platform = createRequest.Platform ?? "apple",
                 language = createRequest.Language ?? "en",
                 customerData = new BoukakCustomerData
                 {
@@ -433,14 +446,18 @@ public class BoukakFunctions
 
         var results = new List<object>();
         var templateId = "0iP6uqiMJBcBjxxU5Azp";
-        var platform = "ios";
+        var platform = "apple";
         var language = "ar";
 
         try
         {
-            // Get first 10 active customers
+            // Get first 10 active customers WITHOUT existing Boukak cards
+            var existingMappingCustomerIds = await _context.BoukakCustomerMappings
+                .Select(m => m.CustomerId)
+                .ToListAsync();
+
             var customers = await _context.Customers
-                .Where(c => c.StatusID == 1)
+                .Where(c => c.StatusID == 1 && !existingMappingCustomerIds.Contains(c.CustomerID))
                 .OrderBy(c => c.CustomerID)
                 .Take(10)
                 .ToListAsync();
@@ -451,7 +468,29 @@ public class BoukakFunctions
             {
                 try
                 {
+                    // Use customer's LocationID for mapping context
+                    // If customer doesn't have a valid location, use the first available location from database
                     var locationId = customer.LocationID ?? 0;
+                    if (locationId == 0 || !await _context.Locations.AnyAsync(l => l.LocationID == locationId))
+                    {
+                        // Get the first available location
+                        var firstLocation = await _context.Locations.OrderBy(l => l.LocationID).FirstOrDefaultAsync();
+                        if (firstLocation == null)
+                        {
+                            _logger.LogWarning("No valid locations found in database, skipping customer {CustomerId}", customer.CustomerID);
+                            results.Add(new
+                            {
+                                customerId = customer.CustomerID,
+                                customerName = customer.FullName,
+                                status = "failed",
+                                error = "No valid locations found in database"
+                            });
+                            continue;
+                        }
+                        locationId = firstLocation.LocationID;
+                        _logger.LogInformation("Customer {CustomerId} has no valid location, using default location {LocationId}",
+                            customer.CustomerID, locationId);
+                    }
 
                     // Check if customer already has a Boukak card
                     var existingMapping = await _context.BoukakCustomerMappings
@@ -603,7 +642,7 @@ public class CreateBoukakCustomerCardRequest
 {
     public int CustomerId { get; set; }
     public string? TemplateId { get; set; }
-    public string? Platform { get; set; } // "android" or "iOS"
+    public string? Platform { get; set; } // "apple" or "android"
     public string? Language { get; set; } // "en" or "ar"
     public decimal? InitialCashback { get; set; }
 }

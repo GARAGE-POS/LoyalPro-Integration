@@ -16,7 +16,7 @@ public interface IBoukakApiService
 public class BoukakCustomerCardRequest
 {
     public string templateId { get; set; } = string.Empty;
-    public string platform { get; set; } = "android"; // "android" or "iOS"
+    public string platform { get; set; } = "apple"; // "apple" or "android"
     public string language { get; set; } = "en"; // "en" or "ar"
     public BoukakCustomerData customerData { get; set; } = new();
 }
@@ -81,12 +81,8 @@ public class BoukakApiService : IBoukakApiService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<BoukakApiService> _logger;
-    private const string SandboxBaseUrl = "https://sandbox.api.partners.boukak.com";
-    private const string ProductionBaseUrl = "https://api.partners.boukak.com";
+    private const string BaseUrl = "https://api.partners.boukak.com";
     private const string ApiKey = "vTf8du7MwXm/0nu+0y732/hoxYlTirreZoSfiqEu/43sRKmkB+Lczo++dXt0Px7bJ4gTxSeFSDE7DHbo/rO1PFr0BUTSDM+/XGHbMwl8aPmk1b0o85D/12RnSl6JYUM0RN6FZhMtcY/J5WA6ZP7UAjHyODv/JLTINywDcO1TRmtvIFAlzS5QdJouo56sBuWfHKdJA9tX8BeKodMZJV6379CNA9vtd6revk92r2RS9rKC9yfhkxLgoXLBfn/1t/ZbX3wvwKVqpE/gelPpK/qmTA==";
-
-    // Use production environment by default
-    private string BaseUrl => ProductionBaseUrl;
 
     public BoukakApiService(HttpClient httpClient, ILogger<BoukakApiService> logger)
     {
@@ -109,39 +105,72 @@ public class BoukakApiService : IBoukakApiService
             httpRequest.Headers.Add("Accept", "application/json");
 
             var response = await _httpClient.SendAsync(httpRequest);
-            var responseContent = await response.Content.ReadAsStringAsync();
 
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("Boukak customer card created successfully. Response: {Response}", responseContent);
+                // Extract customer ID and card ID from response headers
+                string? customerId = null;
+                string? cardId = null;
 
-                var cardResponse = JsonSerializer.Deserialize<BoukakCustomerCardResponse>(responseContent, new JsonSerializerOptions
+                if (response.Headers.TryGetValues("x-customer-id", out var customerIdValues))
                 {
-                    PropertyNameCaseInsensitive = true
-                });
-
-                if (cardResponse != null)
-                {
-                    // Extract customer ID and card ID from response headers
-                    if (response.Headers.TryGetValues("x-customer-id", out var customerIdValues))
-                    {
-                        cardResponse.customerId = customerIdValues.FirstOrDefault();
-                    }
-
-                    if (response.Headers.TryGetValues("x-card-id", out var cardIdValues))
-                    {
-                        cardResponse.cardId = cardIdValues.FirstOrDefault();
-                    }
-
-                    _logger.LogInformation("Extracted Boukak IDs - CustomerId: {CustomerId}, CardId: {CardId}",
-                        cardResponse.customerId, cardResponse.cardId);
+                    customerId = customerIdValues.FirstOrDefault();
                 }
+
+                if (response.Headers.TryGetValues("x-card-id", out var cardIdValues))
+                {
+                    cardId = cardIdValues.FirstOrDefault();
+                }
+
+                // Read response body to check for JSON with URLs
+                var responseBody = await response.Content.ReadAsStringAsync();
+                _logger.LogInformation("Boukak API response body: {ResponseBody}", responseBody);
+
+                string? applePassUrl = null;
+                string? passWalletUrl = null;
+
+                // Try to parse JSON response for URLs
+                try
+                {
+                    var jsonResponse = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(responseBody,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                    if (jsonResponse != null)
+                    {
+                        if (jsonResponse.TryGetValue("applePassUrl", out var appleUrl))
+                        {
+                            applePassUrl = appleUrl.GetString();
+                        }
+                        if (jsonResponse.TryGetValue("passWalletUrl", out var passUrl))
+                        {
+                            passWalletUrl = passUrl.GetString();
+                        }
+                    }
+                }
+                catch (JsonException)
+                {
+                    _logger.LogInformation("Response is not JSON, likely a direct pass file");
+                }
+
+                _logger.LogInformation("Boukak customer card created. CustomerId: {CustomerId}, CardId: {CardId}, ApplePassUrl: {ApplePassUrl}, PassWalletUrl: {PassWalletUrl}",
+                    customerId, cardId, applePassUrl, passWalletUrl);
+
+                var cardResponse = new BoukakCustomerCardResponse
+                {
+                    success = true,
+                    message = "Card created successfully",
+                    customerId = customerId,
+                    cardId = cardId,
+                    applePassUrl = applePassUrl,
+                    passWalletUrl = passWalletUrl
+                };
 
                 return cardResponse;
             }
 
+            var errorResponse = await response.Content.ReadAsStringAsync();
             _logger.LogError("Failed to create Boukak customer card. Status: {StatusCode}, Response: {Response}",
-                response.StatusCode, responseContent);
+                response.StatusCode, errorResponse);
             return null;
         }
         catch (Exception ex)

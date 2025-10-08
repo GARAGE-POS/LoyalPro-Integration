@@ -288,9 +288,7 @@ private const string DefaultTemplateId = "default-template-id";
 **For production**: Configure per location or retrieve from database.
 
 ### Environment
-Currently using production: `https://api.partners.boukak.com`
-
-The service is configured to use the production environment. Sandbox environment is also available at `https://sandbox.api.partners.boukak.com` if needed for testing.
+Production URL: `https://api.partners.boukak.com`
 
 ## Integration Points
 
