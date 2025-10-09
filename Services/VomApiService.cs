@@ -1,10 +1,49 @@
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace Karage.Functions.Services;
+
+// Custom JSON converter to handle fields that can be either string or number (int/decimal)
+public class StringOrIntConverter : JsonConverter<string?>
+{
+    public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Number)
+        {
+            // Try to read as decimal first (handles both int and decimal)
+            if (reader.TryGetDecimal(out var decimalValue))
+            {
+                return decimalValue.ToString();
+            }
+            return reader.GetDouble().ToString();
+        }
+        else if (reader.TokenType == JsonTokenType.String)
+        {
+            return reader.GetString();
+        }
+        else if (reader.TokenType == JsonTokenType.Null)
+        {
+            return null;
+        }
+        throw new JsonException($"Cannot convert {reader.TokenType} to string");
+    }
+
+    public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
+    {
+        if (value == null)
+        {
+            writer.WriteNullValue();
+        }
+        else
+        {
+            writer.WriteStringValue(value);
+        }
+    }
+}
 
 public interface IVomApiService
 {
@@ -94,15 +133,27 @@ public class VomProduct
     public decimal? minimum_quantity { get; set; }
     public int? allow_notification { get; set; }
     public string? desc { get; set; }
-    public decimal? selling_price { get; set; }
-    public decimal? buying_price { get; set; }
+
+    // VOM returns prices as strings OR numbers, so we handle them as strings and convert when needed
+    [JsonConverter(typeof(StringOrIntConverter))]
+    public string? selling_price { get; set; }
+
+    [JsonConverter(typeof(StringOrIntConverter))]
+    public string? buying_price { get; set; }
     public object? total_quantity { get; set; }
     public object? total_cost { get; set; }
     public object? average_cost { get; set; }
 
-    // VOM returns these as strings, so we handle them as strings and convert when needed
+    // VOM returns these as strings OR numbers, so we handle them as strings and convert when needed
+    [JsonConverter(typeof(StringOrIntConverter))]
     public string? category_id { get; set; }
+
+    [JsonConverter(typeof(StringOrIntConverter))]
     public string? unit_id { get; set; }
+
+    // Helper properties to get decimal values from string prices
+    public decimal? SellingPriceAsDecimal => decimal.TryParse(selling_price, out var result) ? result : null;
+    public decimal? BuyingPriceAsDecimal => decimal.TryParse(buying_price, out var result) ? result : null;
     public int? inventory_account_id { get; set; }
 
     // Helper properties to get integer values
@@ -463,14 +514,53 @@ public class VomApiService : IVomApiService
         return default;
     }
 
-    public Task<List<VomProduct>?> GetAllProductsAsync()
+    public async Task<List<VomProduct>?> GetAllProductsAsync()
     {
-        // Based on testing, the VOM /api/products/products endpoint returns metadata (categories, warehouses, etc.)
-        // but does not include an actual products array. The VOM API appears to require searching for products
-        // individually by name rather than providing a bulk list endpoint.
+        var token = await GetAuthToken();
+        if (string.IsNullOrEmpty(token))
+        {
+            return default;
+        }
 
-        _logger.LogInformation("VOM API does not provide a bulk product list endpoint. Products must be searched individually during sync.");
-        return Task.FromResult<List<VomProduct>?>(new List<VomProduct>());
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/api/products/products");
+        AddCommonHeaders(request);
+        request.Headers.Add("Authorization", $"Bearer {token}");
+
+        var response = await _httpClient.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            var responseContent = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(responseContent);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("data", out var dataElement))
+            {
+                // The VOM API returns products in data.products array
+                if (dataElement.TryGetProperty("products", out var productsElement))
+                {
+                    if (productsElement.ValueKind == JsonValueKind.Array)
+                    {
+                        var products = JsonSerializer.Deserialize<List<VomProduct>>(productsElement.GetRawText());
+                        _logger.LogInformation("Retrieved {ProductCount} products from VOM API", products?.Count ?? 0);
+                        return products;
+                    }
+                    else if (productsElement.ValueKind == JsonValueKind.Object)
+                    {
+                        var singleProduct = JsonSerializer.Deserialize<VomProduct>(productsElement.GetRawText());
+                        return singleProduct != null ? new List<VomProduct> { singleProduct } : new List<VomProduct>();
+                    }
+                    else if (productsElement.ValueKind == JsonValueKind.Null)
+                    {
+                        return new List<VomProduct>();
+                    }
+                }
+            }
+            _logger.LogWarning("Unexpected JSON structure in products response: {Content}", responseContent.Substring(0, Math.Min(500, responseContent.Length)));
+            return new List<VomProduct>();
+        }
+
+        _logger.LogError("GET request to /api/products/products failed. Status: {StatusCode}", response.StatusCode);
+        return default;
     }
 
     public async Task<VomProduct?> SearchProductByNameAsync(string productName)
@@ -561,7 +651,31 @@ public class VomApiService : IVomApiService
             }
         }
 
-        _logger.LogWarning("Could not find product '{ProductName}' through search", productName);
+        _logger.LogWarning("Could not find product '{ProductName}' through search endpoints. Falling back to full products list.", productName);
+
+        // Fallback: Get all products and search manually
+        try
+        {
+            var allProducts = await GetAllProductsAsync();
+            if (allProducts != null && allProducts.Any())
+            {
+                var matchingProduct = allProducts.FirstOrDefault(p =>
+                    string.Equals(p.name_en, productName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(p.name_ar, productName, StringComparison.OrdinalIgnoreCase));
+
+                if (matchingProduct != null)
+                {
+                    _logger.LogInformation("Found matching product '{ProductName}' with ID: {VomProductId} via full products list", productName, matchingProduct.id);
+                    return matchingProduct;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to search through full products list for '{ProductName}'", productName);
+        }
+
+        _logger.LogWarning("Could not find product '{ProductName}' in VOM", productName);
         return null;
     }
 
