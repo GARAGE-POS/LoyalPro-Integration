@@ -70,12 +70,12 @@ public class LoyalProFunctions
             }
 
             // Extract business_reference (POS-XXXXX) from session token
-            // Session token format: POS-KARAGE638954291932370545WDD1
-            // We need only: POS-KARAGE
+            // Session token format: POS-KARAGE638954291932370545WDD1 or POS-3d6kqv6389603618196563500
+            // We need only: POS-KARAGE or POS-3d6kqv (before the long timestamp)
             var businessReference = sessionToken;
             if (sessionToken.StartsWith("POS-", StringComparison.OrdinalIgnoreCase))
             {
-                var match = System.Text.RegularExpressions.Regex.Match(sessionToken, @"^(POS-[A-Za-z]+)");
+                var match = System.Text.RegularExpressions.Regex.Match(sessionToken, @"^(POS-[A-Za-z0-9]+?)(?=\d{10,}|$)");
                 if (match.Success)
                 {
                     businessReference = match.Groups[1].Value;
@@ -193,12 +193,12 @@ public class LoyalProFunctions
             }
 
             // Extract business_reference (POS-XXXXX) from session token
-            // Session token format: POS-KARAGE638954291932370545WDD1
-            // We need only: POS-KARAGE
+            // Session token format: POS-KARAGE638954291932370545WDD1 or POS-3d6kqv6389603618196563500
+            // We need only: POS-KARAGE or POS-3d6kqv (before the long timestamp)
             var businessReference = sessionToken;
             if (sessionToken.StartsWith("POS-", StringComparison.OrdinalIgnoreCase))
             {
-                var match = System.Text.RegularExpressions.Regex.Match(sessionToken, @"^(POS-[A-Za-z]+)");
+                var match = System.Text.RegularExpressions.Regex.Match(sessionToken, @"^(POS-[A-Za-z0-9]+?)(?=\d{10,}|$)");
                 if (match.Success)
                 {
                     businessReference = match.Groups[1].Value;
