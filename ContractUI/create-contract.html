@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>إنشاء عقد جديد - نظام إدارة العقود</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>نظام إدارة العقود الرقمية</h1>
+            <p>إنشاء عقد جديد عبر منصة صادق</p>
+        </div>
+
+        <!-- Navigation -->
+        <div class="nav">
+            <a href="index.html">قائمة العقود</a>
+            <a href="create-contract.html" class="active">إنشاء عقد جديد</a>
+        </div>
+
+        <!-- Alert Container -->
+        <div id="alert-container"></div>
+
+        <!-- Main Card -->
+        <div class="card">
+            <!-- Tabs for contract types -->
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('template')">
+                    إنشاء عقد من قالب
+                </button>
+                <button class="tab" onclick="switchTab('pdf')">
+                    رفع عقد PDF
+                </button>
+            </div>
+
+            <!-- Template-based Contract Form -->
+            <div id="template-form" class="tab-content active">
+                <form onsubmit="submitTemplateContract(event)">
+                    <h3 class="mb-3">إنشاء عقد من قالب موجود</h3>
+                    <p class="mb-4" style="color: var(--gray-500);">
+                        قم بإدخال بيانات العميل ومعرف القالب لإنشاء عقد جديد من قالب محفوظ مسبقاً
+                    </p>
+
+                    <div class="form-group">
+                        <label for="template_companyCode" class="required">رمز الشركة</label>
+                        <input type="text" id="template_companyCode" name="companyCode" required 
+                               placeholder="مثال: COMP001">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="template_companyName" class="required">اسم الشركة</label>
+                        <input type="text" id="template_companyName" name="destinationName" required 
+                               placeholder="مثال: شركة كراج للتقنية">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="template_email" class="required">البريد الإلكتروني</label>
+                        <input type="email" id="template_email" name="destinationEmail" required 
+                               placeholder="مثال: info@company.sa">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="template_phone" class="required">رقم الهاتف</label>
+                        <input type="tel" id="template_phone" name="destinationPhoneNumber" required 
+                               placeholder="مثال: +966501234567">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="template_nationalId" class="required">رقم الهوية الوطنية</label>
+                        <input type="text" id="template_nationalId" name="nationalId" required 
+                               placeholder="مثال: 1234567890" maxlength="10">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="template_templateId" class="required">معرف القالب</label>
+                        <input type="text" id="template_templateId" name="templateId" required 
+                               value="bce984ff-50bd-4792-ba5d-1da96de29d2c" readonly
+                               style="background-color: var(--gray-100); cursor: not-allowed;">
+                        <small style="color: var(--gray-500);">
+                            القالب الافتراضي للعقود - لا يمكن تعديله
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="template_terminals">عدد الأجهزة المشتراة (اختياري)</label>
+                        <input type="number" id="template_terminals" name="terminals" 
+                               placeholder="مثال: 5" min="1" max="100">
+                        <small style="color: var(--gray-500);">
+                            أدخل عدد الأجهزة (Terminals) التي تم شراؤها
+                        </small>
+                    </div>
+
+                    <div class="flex gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary" id="template-submit-btn">
+                            إنشاء العقد وإرساله
+                        </button>
+                        <button type="reset" class="btn btn-secondary" onclick="resetForm('template')">
+                            إعادة تعيين
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- PDF-based Contract Form -->
+            <div id="pdf-form" class="tab-content">
+                <form onsubmit="submitPdfContract(event)">
+                    <h3 class="mb-3">رفع عقد بصيغة PDF</h3>
+                    <p class="mb-4" style="color: var(--gray-500);">
+                        قم برفع ملف PDF للعقد مع إدخال بيانات العميل
+                    </p>
+
+                    <div class="form-group">
+                        <label for="pdf_companyCode" class="required">رمز الشركة</label>
+                        <input type="text" id="pdf_companyCode" name="companyCode" required 
+                               placeholder="مثال: COMP001">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pdf_companyName" class="required">اسم الشركة</label>
+                        <input type="text" id="pdf_companyName" name="companyName" required 
+                               placeholder="مثال: شركة كراج للتقنية">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pdf_email" class="required">البريد الإلكتروني</label>
+                        <input type="email" id="pdf_email" name="email" required 
+                               placeholder="مثال: info@company.sa">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pdf_phone" class="required">رقم الهاتف</label>
+                        <input type="tel" id="pdf_phone" name="phoneNumber" required 
+                               placeholder="مثال: +966501234567">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pdf_nationalId" class="required">رقم الهوية الوطنية</label>
+                        <input type="text" id="pdf_nationalId" name="nationalId" required 
+                               placeholder="مثال: 1234567890" maxlength="10">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pdf_terminals">عدد الأجهزة المشتراة (اختياري)</label>
+                        <input type="number" id="pdf_terminals" name="terminals" 
+                               placeholder="مثال: 5" min="1" max="100">
+                        <small style="color: var(--gray-500);">
+                            أدخل عدد الأجهزة (Terminals) التي تم شراؤها
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="pdf_file" class="required">ملف العقد (PDF)</label>
+                        <input type="file" id="pdf_file" name="file" required accept=".pdf">
+                        <small style="color: var(--gray-500);">
+                            حجم الملف الأقصى: 10 ميجابايت. الصيغة المدعومة: PDF فقط
+                        </small>
+                    </div>
+
+                    <div id="file-info" class="alert alert-info hidden mt-2">
+                        <strong>الملف المختار:</strong> <span id="file-name"></span><br>
+                        <strong>الحجم:</strong> <span id="file-size"></span>
+                    </div>
+
+                    <div class="flex gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary" id="pdf-submit-btn">
+                            رفع العقد وإرساله
+                        </button>
+                        <button type="reset" class="btn btn-secondary" onclick="resetForm('pdf')">
+                            إعادة تعيين
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Information Card -->
+        <div class="card mt-4">
+            <h3 style="color: var(--primary-color); margin-bottom: 15px;">معلومات مهمة</h3>
+            <ul style="line-height: 2; color: var(--gray-700);">
+                <li>تأكد من صحة جميع البيانات قبل الإرسال</li>
+                <li>رقم الهاتف يجب أن يبدأ بـ +966 للأرقام السعودية</li>
+                <li>رقم الهوية الوطنية يجب أن يكون 10 أرقام</li>
+                <li>عدد الأجهزة (Terminals) هو عدد نقاط البيع المشتراة</li>
+                <li>سيتم إرسال العقد إلى البريد الإلكتروني ورقم الهاتف المسجل</li>
+                <li>صلاحية العقد: 30 يوماً من تاريخ الإرسال</li>
+                <li>يمكنك متابعة حالة العقد من صفحة "قائمة العقود"</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // API Configuration
+        const API_BASE_URL = 'http://localhost:7071/api';
+        let currentTab = 'template';
+
+        // Switch between tabs
+        function switchTab(tabName) {
+            currentTab = tabName;
+            
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Update tab content
+            document.getElementById('template-form').classList.remove('active');
+            document.getElementById('pdf-form').classList.remove('active');
+
+            if (tabName === 'template') {
+                document.getElementById('template-form').classList.add('active');
+            } else {
+                document.getElementById('pdf-form').classList.add('active');
+            }
+
+            // Clear alerts
+            hideAlert();
+        }
+
+        // Submit template-based contract
+        async function submitTemplateContract(event) {
+            event.preventDefault();
+            
+            const submitBtn = document.getElementById('template-submit-btn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'جاري الإرسال...';
+            hideAlert();
+
+            const formData = new FormData(event.target);
+            const data = {
+                companyCode: formData.get('companyCode'),
+                destinationName: formData.get('destinationName'),
+                destinationEmail: formData.get('destinationEmail'),
+                destinationPhoneNumber: formData.get('destinationPhoneNumber'),
+                nationalId: formData.get('nationalId'),
+                templateId: formData.get('templateId'),
+                terminals: formData.get('terminals') || null
+            };
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/sadeq_request`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showAlert('تم إنشاء العقد وإرساله بنجاح! سيتم تحويلك إلى قائمة العقود...', 'success');
+                    event.target.reset();
+                    
+                    // Redirect to contracts list after 2 seconds
+                    setTimeout(() => {
+                        window.location.href = 'index.html';
+                    }, 2000);
+                } else {
+                    throw new Error(result.error || result.message || 'فشل في إنشاء العقد');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showAlert('حدث خطأ أثناء إنشاء العقد: ' + error.message, 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'إنشاء العقد وإرساله';
+            }
+        }
+
+        // Submit PDF-based contract
+        async function submitPdfContract(event) {
+            event.preventDefault();
+            
+            const submitBtn = document.getElementById('pdf-submit-btn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'جاري الرفع والإرسال...';
+            hideAlert();
+
+            const form = event.target;
+            const formData = new FormData(form);
+
+            // Validate file size (max 10MB)
+            const fileInput = document.getElementById('pdf_file');
+            const file = fileInput.files[0];
+            
+            if (file && file.size > 10 * 1024 * 1024) {
+                showAlert('حجم الملف كبير جداً. الحجم الأقصى المسموح: 10 ميجابايت', 'error');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'رفع العقد وإرساله';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/sadeq_upload_pdf`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showAlert('تم رفع العقد وإرساله بنجاح! سيتم تحويلك إلى قائمة العقود...', 'success');
+                    form.reset();
+                    document.getElementById('file-info').classList.add('hidden');
+                    
+                    // Redirect to contracts list after 2 seconds
+                    setTimeout(() => {
+                        window.location.href = 'index.html';
+                    }, 2000);
+                } else {
+                    throw new Error(result.error || 'فشل في رفع العقد');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showAlert('حدث خطأ أثناء رفع العقد: ' + error.message, 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'رفع العقد وإرساله';
+            }
+        }
+
+        // Handle file input change
+        document.getElementById('pdf_file').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            
+            if (file) {
+                const fileInfo = document.getElementById('file-info');
+                const fileName = document.getElementById('file-name');
+                const fileSize = document.getElementById('file-size');
+
+                fileName.textContent = file.name;
+                fileSize.textContent = formatFileSize(file.size);
+                fileInfo.classList.remove('hidden');
+
+                // Validate file type
+                if (!file.name.toLowerCase().endsWith('.pdf')) {
+                    showAlert('الرجاء اختيار ملف بصيغة PDF فقط', 'error');
+                    e.target.value = '';
+                    fileInfo.classList.add('hidden');
+                }
+            }
+        });
+
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        // Reset form
+        function resetForm(formType) {
+            hideAlert();
+            
+            if (formType === 'pdf') {
+                document.getElementById('file-info').classList.add('hidden');
+            }
+        }
+
+        // Show alert message
+        function showAlert(message, type = 'info') {
+            const container = document.getElementById('alert-container');
+            const alertClass = `alert-${type}`;
+
+            container.innerHTML = `
+                <div class="alert ${alertClass}">
+                    ${message}
+                </div>
+            `;
+
+            // Scroll to top to show the alert
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Hide alert message
+        function hideAlert() {
+            document.getElementById('alert-container').innerHTML = '';
+        }
+
+        // Validate phone number format
+        document.querySelectorAll('input[type="tel"]').forEach(input => {
+            input.addEventListener('blur', function() {
+                const phone = this.value.trim();
+                if (phone && !phone.startsWith('+966')) {
+                    showAlert('رقم الهاتف يجب أن يبدأ بـ +966', 'warning');
+                }
+            });
+        });
+
+        // Validate national ID format
+        document.querySelectorAll('input[name="nationalId"]').forEach(input => {
+            input.addEventListener('input', function() {
+                // Allow only numbers
+                this.value = this.value.replace(/[^0-9]/g, '');
+            });
+
+            input.addEventListener('blur', function() {
+                const nationalId = this.value.trim();
+                if (nationalId && nationalId.length !== 10) {
+                    showAlert('رقم الهوية الوطنية يجب أن يكون 10 أرقام', 'warning');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

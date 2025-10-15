@@ -39,6 +39,7 @@ public class V1DbContext : DbContext
     public DbSet<Reconciliation> Reconciliations { get; set; }
     public DbSet<ReconciliationDetail> ReconciliationDetails { get; set; }
     public DbSet<MoyasarPaymentWebhook> MoyasarPaymentWebhooks { get; set; }
+    public DbSet<ContractStatus> IntegrationSadeqContracts { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

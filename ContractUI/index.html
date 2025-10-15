@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>إدارة العقود - قائمة العقود</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>نظام إدارة العقود الرقمية</h1>
+            <p>نظام متكامل لإدارة العقود والتوقيعات الإلكترونية عبر منصة صادق</p>
+        </div>
+
+        <!-- Navigation -->
+        <div class="nav">
+            <a href="index.html" class="active">قائمة العقود</a>
+            <a href="create-contract.html">إنشاء عقد جديد</a>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>إجمالي العقود</h3>
+                <div class="stat-value" id="total-contracts">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>تم الإرسال بنجاح</h3>
+                <div class="stat-value" id="sent-contracts">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>العقود الموقعة</h3>
+                <div class="stat-value" id="signed-contracts">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>بانتظار التوقيع</h3>
+                <div class="stat-value" id="pending-contracts">0</div>
+            </div>
+        </div>
+
+        <!-- Alert Container -->
+        <div id="alert-container"></div>
+
+        <!-- Contracts Table -->
+        <div class="card">
+            <div class="card-header">
+                <h2>جميع العقود</h2>
+                <button class="btn btn-primary" onclick="refreshContracts()">
+                    تحديث القائمة
+                </button>
+            </div>
+
+            <!-- Loading State -->
+            <div id="loading" class="loading hidden">
+                <div class="spinner"></div>
+            </div>
+
+            <!-- Empty State -->
+            <div id="empty-state" class="empty-state hidden">
+                <h3>لا توجد عقود حالياً</h3>
+                <p>لم يتم إنشاء أي عقود بعد. ابدأ بإنشاء عقد جديد.</p>
+                <a href="create-contract.html" class="btn btn-primary">إنشاء عقد جديد</a>
+            </div>
+
+            <!-- Table -->
+            <div id="table-container" class="table-container hidden">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>رقم العقد</th>
+                            <th>رمز الشركة</th>
+                            <th>اسم الشركة</th>
+                            <th>رقم الهاتف</th>
+                            <th>البريد الإلكتروني</th>
+                            <th>رقم الهوية</th>
+                            <th>عدد الأجهزة</th>
+                            <th>نوع العقد</th>
+                            <th>حالة الإرسال</th>
+                            <th>حالة التوقيع</th>
+                            <th>تاريخ الإنشاء</th>
+                            <th>تاريخ التوقيع</th>
+                        </tr>
+                    </thead>
+                    <tbody id="contracts-tbody">
+                        <!-- Contracts will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Configuration
+        const API_BASE_URL = 'http://localhost:7071/api';
+
+        // Load contracts on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadContracts();
+        });
+
+        // Load contracts from API
+        async function loadContracts() {
+            showLoading(true);
+            hideAlert();
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/contracts`);
+
+                if (!response.ok) {
+                    throw new Error('فشل في تحميل العقود من الخادم');
+                }
+
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    displayContracts(result.data);
+                    updateStats(result.data);
+                } else {
+                    throw new Error('صيغة استجابة غير صحيحة من الخادم');
+                }
+            } catch (error) {
+                console.error('Error loading contracts:', error);
+                showAlert('حدث خطأ أثناء تحميل العقود: ' + error.message, 'error');
+                showEmptyState(true);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Display contracts in table
+        function displayContracts(contracts) {
+            const tbody = document.getElementById('contracts-tbody');
+
+            if (!contracts || contracts.length === 0) {
+                showEmptyState(true);
+                return;
+            }
+
+            showEmptyState(false);
+            document.getElementById('table-container').classList.remove('hidden');
+
+            tbody.innerHTML = contracts.map(contract => `
+                <tr>
+                    <td>${contract.id}</td>
+                    <td>${contract.companyCode || '-'}</td>
+                    <td>${contract.companyName}</td>
+                    <td>${contract.phoneNumber}</td>
+                    <td>${contract.email}</td>
+                    <td>${contract.nationalId}</td>
+                    <td>${contract.terminals || '-'}</td>
+                    <td>${getContractType(contract)}</td>
+                    <td>${getSentStatusBadge(contract.sadqSent)}</td>
+                    <td>${getSignedStatusBadge(contract.signed)}</td>
+                    <td>${formatDate(contract.createdAt)}</td>
+                    <td>${contract.signedAt ? formatDate(contract.signedAt) : '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Update statistics
+        function updateStats(contracts) {
+            const total = contracts.length;
+            const sent = contracts.filter(c => c.sadqSent).length;
+            const signed = contracts.filter(c => c.signed).length;
+            const pending = contracts.filter(c => c.sadqSent && !c.signed).length;
+
+            document.getElementById('total-contracts').textContent = total;
+            document.getElementById('sent-contracts').textContent = sent;
+            document.getElementById('signed-contracts').textContent = signed;
+            document.getElementById('pending-contracts').textContent = pending;
+        }
+
+        // Get contract type (Template or PDF)
+        function getContractType(contract) {
+            if (contract.templateId) {
+                return `<span class="badge badge-info">قالب: ${contract.templateId}</span>`;
+            } else if (contract.pdfFileName) {
+                return `<span class="badge badge-info">PDF: ${contract.pdfFileName}</span>`;
+            }
+            return '<span class="badge badge-warning">غير محدد</span>';
+        }
+
+        // Get sent status badge
+        function getSentStatusBadge(sent) {
+            if (sent) {
+                return '<span class="badge badge-success">تم الإرسال</span>';
+            }
+            return '<span class="badge badge-danger">فشل الإرسال</span>';
+        }
+
+        // Get signed status badge
+        function getSignedStatusBadge(signed) {
+            if (signed) {
+                return '<span class="badge badge-success">تم التوقيع</span>';
+            }
+            return '<span class="badge badge-warning">بانتظار التوقيع</span>';
+        }
+
+        // Format date to Arabic format (Gregorian)
+        function formatDate(dateString) {
+            if (!dateString) return '-';
+
+            const date = new Date(dateString);
+            const options = {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                calendar: 'gregory'
+            };
+
+            return date.toLocaleDateString('en-GB', options);
+        }
+
+        // Show/hide loading spinner
+        function showLoading(show) {
+            const loading = document.getElementById('loading');
+            if (show) {
+                loading.classList.remove('hidden');
+            } else {
+                loading.classList.add('hidden');
+            }
+        }
+
+        // Show/hide empty state
+        function showEmptyState(show) {
+            const emptyState = document.getElementById('empty-state');
+            const tableContainer = document.getElementById('table-container');
+
+            if (show) {
+                emptyState.classList.remove('hidden');
+                tableContainer.classList.add('hidden');
+            } else {
+                emptyState.classList.add('hidden');
+                tableContainer.classList.remove('hidden');
+            }
+        }
+
+        // Show alert message
+        function showAlert(message, type = 'info') {
+            const container = document.getElementById('alert-container');
+            const alertClass = `alert-${type}`;
+
+            container.innerHTML = `
+                <div class="alert ${alertClass}">
+                    ${message}
+                </div>
+            `;
+        }
+
+        // Hide alert message
+        function hideAlert() {
+            document.getElementById('alert-container').innerHTML = '';
+        }
+
+        // Refresh contracts
+        function refreshContracts() {
+            loadContracts();
+        }
+    </script>
+</body>
+</html>
