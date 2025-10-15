@@ -242,11 +242,21 @@ public class VomApiService : IVomApiService
             return _cachedToken;
         }
 
+        // Read credentials from environment variables
+        var email = Environment.GetEnvironmentVariable("VOM_EMAIL");
+        var password = Environment.GetEnvironmentVariable("VOM_PASSWORD");
+
+        if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
+        {
+            _logger.LogError("VOM credentials not configured. Please set VOM_EMAIL and VOM_PASSWORD environment variables.");
+            return null;
+        }
+
         // Use VOM's login API to get authentication token
         var loginRequest = new
         {
-            email = "Odai.alhasan88@gmail.com",
-            password = "Aa1m7A5dMD5"
+            email = email,
+            password = password
         };
 
         var jsonContent = JsonSerializer.Serialize(loginRequest);

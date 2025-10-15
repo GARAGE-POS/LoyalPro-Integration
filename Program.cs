@@ -20,7 +20,7 @@ builder.Services
     .AddApplicationInsightsTelemetryWorkerService()
     .ConfigureFunctionsApplicationInsights();
 
-var connectionString = builder.Configuration["V1DatabaseConnectionString"];
+var connectionString = builder.Configuration.GetConnectionString("V1DatabaseConnectionString");
 Console.WriteLine($"Connection string value: '{connectionString}'");
 if (string.IsNullOrEmpty(connectionString))
 {
@@ -43,8 +43,8 @@ catch (Exception ex)
 // Register API Key Service
 builder.Services.AddScoped<IApiKeyService, ApiKeyService>();
 
-// Register VOM API Service
-builder.Services.AddScoped<IVomApiService, VomApiService>();
+// Register VOM API Service as Singleton to share token cache across all requests
+builder.Services.AddSingleton<IVomApiService, VomApiService>();
 
 // Register Session Authentication Service
 builder.Services.AddScoped<ISessionAuthService, SessionAuthService>();

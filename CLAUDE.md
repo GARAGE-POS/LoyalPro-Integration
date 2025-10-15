@@ -151,6 +151,26 @@ Required parameters:
 
 ## Authentication
 
+### VOM API Credentials
+
+VOM API credentials are now stored in environment variables for security:
+
+**Configuration:**
+1. Open `local.settings.json`
+2. Set the following values:
+   ```json
+   "VOM_EMAIL": "your-vom-email@example.com",
+   "VOM_PASSWORD": "your-vom-password"
+   ```
+
+**For production (Azure):**
+Set these as Application Settings in the Azure Portal.
+
+**Implementation:**
+- Credentials are read from environment variables in `VomApiService.cs:246-247`
+- Token is cached for 23 hours to reduce API calls
+- Authentication automatically happens on first API request
+
 ### Session-Based Authentication Added ✅
 
 The SyncUnitsToVom endpoint now uses session-based authentication instead of requiring location_id and user_id parameters.

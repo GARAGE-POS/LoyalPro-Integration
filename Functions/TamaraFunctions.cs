@@ -13,6 +13,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Karage.Functions.Services;
+using System.Data;
 
 namespace Karage.Functions.Functions;
 
@@ -159,6 +160,40 @@ public class TamaraFunctions
         {
             _logger.LogError(ex, "Error processing Tamara webhook");
             return new StatusCodeResult(500);
+        }
+    }
+
+    [Function("check-tamara-orders-status")]
+    public async Task CheckTamaraOrdersStatus(
+        [TimerTrigger("0 */15 * * * *")] object timerInfo)
+    {
+        _logger.LogInformation("Tamara order status check started at: {Time}", DateTime.UtcNow);
+
+        try
+        {
+            var pendingOrders = await GetPendingTamaraOrders();
+            _logger.LogInformation("Found {Count} pending Tamara orders to check", pendingOrders.Count);
+
+            foreach (var order in pendingOrders)
+            {
+                try
+                {
+                    await CheckAndUpdateSingleOrder(order.TamaraOrderID, order.OrderID);
+                    // Add a small delay between API calls to avoid rate limiting
+                    await Task.Delay(500);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error checking status for TamaraOrderID: {TamaraOrderId}", order.TamaraOrderID);
+                    // Continue with next order even if one fails
+                }
+            }
+
+            _logger.LogInformation("Tamara order status check completed at: {Time}", DateTime.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in CheckTamaraOrdersStatus timer function");
         }
     }
 
@@ -334,6 +369,108 @@ public class TamaraFunctions
         }
     }
 
+    private async Task<List<TamaraOrderInfo>> GetPendingTamaraOrders()
+    {
+        var orders = new List<TamaraOrderInfo>();
+
+        try
+        {
+            using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // Get orders with StatusID=108 (pending Tamara confirmation)
+            // Only check orders from the last 30 days to avoid unnecessary API calls
+            var query = @"
+                SELECT ito.OrderID, ito.TamaraOrderID, ito.TamaraCheckoutID, o.StatusID
+                FROM IntegrationTamaraOrders ito
+                INNER JOIN Orders o ON ito.OrderID = o.OrderID
+                WHERE o.StatusID = 108
+                    AND o.OrderCreatedDT >= DATEADD(day, -30, GETDATE())
+                ORDER BY o.OrderCreatedDT DESC";
+
+            using var command = new SqlCommand(query, connection);
+            using var reader = await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                orders.Add(new TamaraOrderInfo
+                {
+                    OrderID = reader.GetInt32(0),
+                    TamaraOrderID = reader.GetString(1),
+                    TamaraCheckoutID = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    CurrentStatusID = reader.GetInt32(3)
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving pending Tamara orders from database");
+            throw;
+        }
+
+        return orders;
+    }
+
+    private async Task CheckAndUpdateSingleOrder(string tamaraOrderId, int orderID)
+    {
+        try
+        {
+            var url = $"{_tamaraApiUrl}merchants/orders/{tamaraOrderId}";
+
+            _httpClient.DefaultRequestHeaders.Clear();
+            _httpClient.DefaultRequestHeaders.Add("accept", "application/json");
+            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_tamaraAuthToken}");
+
+            var response = await _httpClient.GetAsync(url);
+            var responseContent = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Failed to get order details for TamaraOrderID {TamaraOrderId}: Status {StatusCode}",
+                    tamaraOrderId, (int)response.StatusCode);
+                return;
+            }
+
+            var orderDetails = JsonDocument.Parse(responseContent);
+            var status = orderDetails.RootElement.TryGetProperty("status", out var statusElement) 
+                ? statusElement.GetString() 
+                : null;
+
+            if (string.IsNullOrEmpty(status))
+            {
+                _logger.LogWarning("No status found in response for TamaraOrderID {TamaraOrderId}", tamaraOrderId);
+                return;
+            }
+
+            // Map Tamara status to our order status
+            int? newStatusId = status.ToLower() switch
+            {
+                "approved" => 103,
+                "canceled" or "cancelled" => 105,
+                "refunded" => 106,
+                "expired" => 105, // Treat expired as canceled
+                _ => null
+            };
+
+            if (newStatusId.HasValue)
+            {
+                UpdateOrderStatusUsingTamara(tamaraOrderId, newStatusId.Value);
+                _logger.LogInformation("Updated OrderID {OrderId} (TamaraOrderID: {TamaraOrderId}) from periodic check. Status: {Status} -> {StatusId}",
+                    orderID, tamaraOrderId, status, newStatusId.Value);
+            }
+            else
+            {
+                _logger.LogInformation("TamaraOrderID {TamaraOrderId} has status '{Status}' - no update needed",
+                    tamaraOrderId, status);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking and updating order {TamaraOrderId}", tamaraOrderId);
+            throw;
+        }
+    }
+
     private void UpdateOrderStatusUsingTamara(string? orderId, int orderStatus)
     {
         if (string.IsNullOrEmpty(orderId))
@@ -483,4 +620,13 @@ public class TamaraWebhookRequest
 {
     public string event_type { get; set; } = string.Empty;
     public string order_id { get; set; } = string.Empty;
+}
+
+// Internal model for tracking Tamara orders
+public class TamaraOrderInfo
+{
+    public int OrderID { get; set; }
+    public string TamaraOrderID { get; set; } = string.Empty;
+    public string? TamaraCheckoutID { get; set; }
+    public int CurrentStatusID { get; set; }
 }
