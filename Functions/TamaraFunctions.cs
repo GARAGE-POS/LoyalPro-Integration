@@ -369,6 +369,145 @@ public class TamaraFunctions
         }
     }
 
+    [Function("refund-tamara-order")]
+    [OpenApiOperation(operationId: "RefundTamaraOrder", tags: new[] { "Tamara" }, Summary = "Refund a Tamara order", Description = "Processes a full or partial refund for a captured Tamara order." )]
+    [OpenApiSecurity("bearer_auth", SecuritySchemeType.Http, Scheme = OpenApiSecuritySchemeType.Bearer, BearerFormat = "Session token")]
+    [OpenApiRequestBody(contentType: "application/json", bodyType: typeof(TamaraRefundRequest), Required = true, Description = "Refund payload including our orderId and refund amount")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "application/json", bodyType: typeof(object), Description = "Refund processed successfully")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.BadRequest, contentType: "application/json", bodyType: typeof(ErrorResponse), Description = "Invalid request payload")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.NotFound, contentType: "application/json", bodyType: typeof(ErrorResponse), Description = "Order mapping not found")]
+    public async Task<IActionResult> RefundTamaraOrder(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "refund-tamara-order")] HttpRequest req)
+    {
+        _logger.LogInformation("Refund Tamara order endpoint called.");
+
+        try
+        {
+            var (authResult, sessionData) = await _sessionAuthService.VerifySessionAndGetData(req);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
+            var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            TamaraRefundRequest? payload;
+
+            try
+            {
+                payload = JsonSerializer.Deserialize<TamaraRefundRequest>(requestBody, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+            }
+            catch (JsonException)
+            {
+                return new BadRequestObjectResult(new { success = false, message = "Invalid or missing JSON body" });
+            }
+
+            if (payload == null)
+            {
+                return new BadRequestObjectResult(new { success = false, message = "Request body is required" });
+            }
+
+            var validationErrors = new List<string>();
+
+            if (payload.OrderId <= 0)
+            {
+                validationErrors.Add("orderId must be a positive integer");
+            }
+
+            if (payload.Amount <= 0)
+            {
+                validationErrors.Add("amount must be greater than zero");
+            }
+
+            if (string.IsNullOrWhiteSpace(payload.Currency))
+            {
+                validationErrors.Add("currency is required");
+            }
+
+            if (validationErrors.Count > 0)
+            {
+                return new BadRequestObjectResult(new { success = false, message = "Validation failed", errors = validationErrors });
+            }
+
+            var tamaraOrderId = await GetTamaraOrderIdAsync(payload.OrderId);
+            if (string.IsNullOrEmpty(tamaraOrderId))
+            {
+                return new NotFoundObjectResult(new { success = false, message = $"Tamara order mapping not found for OrderID {payload.OrderId}" });
+            }
+
+            var tamaraUrl = $"{_tamaraApiUrl.TrimEnd('/')}/payments/simplified-refund/{tamaraOrderId}";
+
+            var tamaraRequest = new Dictionary<string, object?>
+            {
+                ["total_amount"] = new Dictionary<string, object>
+                {
+                    ["amount"] = payload.Amount,
+                    ["currency"] = payload.Currency!.ToUpperInvariant()
+                },
+                ["comment"] = "KarageRefund"
+            };
+
+            var jsonContent = JsonSerializer.Serialize(tamaraRequest);
+            var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+            _httpClient.DefaultRequestHeaders.Clear();
+            _httpClient.DefaultRequestHeaders.Add("accept", "application/json");
+            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_tamaraAuthToken}");
+
+            if (string.IsNullOrWhiteSpace(_tamaraAuthToken))
+            {
+                _logger.LogWarning("Tamara auth token is not configured. Cannot process refund.");
+                return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+            }
+
+            var response = await _httpClient.PostAsync(tamaraUrl, content);
+            var responseContent = await response.Content.ReadAsStringAsync();
+
+            _logger.LogInformation("Tamara refund response - Status: {StatusCode}, Content: {ResponseContent}", (int)response.StatusCode, responseContent);
+
+            object? parsedResponse = null;
+            try
+            {
+                parsedResponse = JsonSerializer.Deserialize<object>(responseContent, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+            }
+            catch (JsonException)
+            {
+                parsedResponse = responseContent;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new ObjectResult(new
+                {
+                    success = false,
+                    message = "Tamara refund request failed",
+                    tamaraStatus = (int)response.StatusCode,
+                    tamaraResponse = parsedResponse
+                })
+                {
+                    StatusCode = (int)response.StatusCode
+                };
+            }
+
+            return new OkObjectResult(new
+            {
+                success = true,
+                message = "Refund processed successfully",
+                tamaraResponse = parsedResponse
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing Tamara refund for order");
+            return new StatusCodeResult(StatusCodes.Status500InternalServerError);
+        }
+    }
+
     private async Task<List<TamaraOrderInfo>> GetPendingTamaraOrders()
     {
         var orders = new List<TamaraOrderInfo>();
@@ -467,6 +606,31 @@ public class TamaraFunctions
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error checking and updating order {TamaraOrderId}", tamaraOrderId);
+            throw;
+        }
+    }
+
+    private async Task<string?> GetTamaraOrderIdAsync(int orderId)
+    {
+        try
+        {
+            using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var query = @"
+                SELECT TamaraOrderID
+                FROM IntegrationTamaraOrders
+                WHERE OrderID = @OrderID";
+
+            using var command = new SqlCommand(query, connection);
+            command.Parameters.AddWithValue("@OrderID", orderId);
+
+            var result = await command.ExecuteScalarAsync();
+            return result as string;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to retrieve Tamara order ID for OrderID={OrderId}", orderId);
             throw;
         }
     }
@@ -620,6 +784,13 @@ public class TamaraWebhookRequest
 {
     public string event_type { get; set; } = string.Empty;
     public string order_id { get; set; } = string.Empty;
+}
+
+public class TamaraRefundRequest
+{
+    public int OrderId { get; set; }
+    public decimal Amount { get; set; }
+    public string? Currency { get; set; } = "SAR";
 }
 
 // Internal model for tracking Tamara orders
